@@ -50,6 +50,9 @@
   ],
   "author": "Nate Richardson <hello@naterichardson.com> (https://naterichardson.com)",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nacho-labs-llc/nachos-embeddings.git"
