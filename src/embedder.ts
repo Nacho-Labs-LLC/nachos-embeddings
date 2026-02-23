@@ -2,7 +2,7 @@
  * Text embedding using Transformers.js (local, no API needed)
  */
 
-import { pipeline, env } from '@xenova/transformers';
+import { pipeline, env } from '@huggingface/transformers';
 
 export interface EmbedderConfig {
   /**
