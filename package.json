@@ -1,6 +1,6 @@
 {
   "name": "@nacho-labs/nachos-embeddings",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Local, privacy-first vector embeddings and semantic search using Transformers.js",
   "type": "module",
   "main": "./dist/index.js",

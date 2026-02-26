@@ -21,10 +21,13 @@
  * ```
  */
 
-// High-level API
 export { SemanticSearch, type SemanticSearchConfig, type Document } from './semantic-search.js';
 
-// Low-level building blocks
+export {
+  EnhancedSemanticSearch,
+  type EnhancedSemanticSearchConfig,
+} from './semantic-search-enhanced.js';
+
 export { Embedder, getGlobalEmbedder, resetGlobalEmbedder, type EmbedderConfig } from './embedder.js';
 
 export {
@@ -35,3 +38,5 @@ export {
   type VectorEntry,
   type SearchResult,
 } from './vector-store.js';
+
+export { chunkText, estimateTokens, textSimilarity, normalizeText } from './utils.js';
