@@ -51,15 +51,11 @@ export class Embedder {
       progressLogging: config.progressLogging ?? false,
     };
 
-    // Configure Transformers.js
     env.cacheDir = this.config.cacheDir;
-    env.allowLocalModels = false; // Use remote models
+    env.allowLocalModels = false;
   }
 
-  /**
-   * Initialize the embedder (downloads model on first run)
-   * Call this before using embed() or embedBatch()
-   */
+  /** Call before using embed() or embedBatch() */
   async init(): Promise<void> {
     if (this.initialized) {
       return;
@@ -78,11 +74,7 @@ export class Embedder {
     }
   }
 
-  /**
-   * Generate embedding vector for a single text
-   *
-   * @throws Error if not initialized (call init() first)
-   */
+  /** @throws Error if not initialized */
   async embed(text: string): Promise<number[]> {
     if (!this.initialized || !this.pipeline) {
       throw new Error('Embedder not initialized. Call init() first.');
@@ -96,10 +88,7 @@ export class Embedder {
     return Array.from(output.data);
   }
 
-  /**
-   * Generate embeddings for multiple texts in batch
-   * More efficient than calling embed() multiple times
-   */
+  /** More efficient than calling embed() multiple times */
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (!this.initialized || !this.pipeline) {
       throw new Error('Embedder not initialized. Call init() first.');
@@ -124,10 +113,7 @@ export class Embedder {
     return embeddings;
   }
 
-  /**
-   * Get the dimension of the embedding vectors
-   * Returns null if not initialized
-   */
+  /** Returns null if not initialized */
   async getDimension(): Promise<number | null> {
     if (!this.initialized) {
       return null;
@@ -137,25 +123,16 @@ export class Embedder {
     return testVector.length;
   }
 
-  /**
-   * Check if the embedder is ready to use
-   */
   isInitialized(): boolean {
     return this.initialized;
   }
 
-  /**
-   * Get current configuration
-   */
   getConfig(): Readonly<Required<EmbedderConfig>> {
     return { ...this.config };
   }
 }
 
-/**
- * Create a singleton embedder instance (shared across application)
- * Useful to avoid loading the model multiple times
- */
+/** Singleton instance - avoids loading model multiple times */
 let globalEmbedder: Embedder | null = null;
 
 export function getGlobalEmbedder(config?: EmbedderConfig): Embedder {
@@ -165,9 +142,7 @@ export function getGlobalEmbedder(config?: EmbedderConfig): Embedder {
   return globalEmbedder;
 }
 
-/**
- * Reset the global embedder (useful for testing)
- */
+/** For testing */
 export function resetGlobalEmbedder(): void {
   globalEmbedder = null;
 }

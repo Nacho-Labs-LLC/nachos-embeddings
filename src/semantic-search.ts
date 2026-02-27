@@ -104,16 +104,10 @@ export class SemanticSearch<T = unknown> {
     });
   }
 
-  /**
-   * Initialize the search engine (downloads model on first run)
-   */
   async init(): Promise<void> {
     await this.embedder.init();
   }
 
-  /**
-   * Auto-persist the index if autoSave is enabled
-   */
   private async autoPersist(): Promise<void> {
     if (this.config.autoSave && this.config.storePath) {
       const dir = dirname(this.config.storePath);
@@ -124,11 +118,7 @@ export class SemanticSearch<T = unknown> {
     }
   }
 
-  /**
-   * Add a document to the search index
-   */
   async addDocument(doc: Document<T>): Promise<void> {
-    // Deduplication check
     if (this.config.deduplication) {
       for (const [existingId, existingText] of this.documents.entries()) {
         if (existingText === doc.text) {
@@ -146,11 +136,8 @@ export class SemanticSearch<T = unknown> {
     await this.autoPersist();
   }
 
-  /**
-   * Add multiple documents in batch (more efficient)
-   */
+  /** Batch add (more efficient than individual calls) */
   async addDocuments(docs: Document<T>[]): Promise<void> {
-    // Apply deduplication if enabled
     let filteredDocs = docs;
     if (this.config.deduplication) {
       const seenTexts = new Set<string>(this.documents.values());
@@ -180,9 +167,6 @@ export class SemanticSearch<T = unknown> {
     await this.autoPersist();
   }
 
-  /**
-   * Semantic search for similar documents
-   */
   async search(
     query: string,
     options?: {
@@ -194,16 +178,12 @@ export class SemanticSearch<T = unknown> {
     const queryVector = await this.embedder.embed(query);
     const results = this.vectorStore.search(queryVector, options);
 
-    // Add original text to results
     return results.map((result) => ({
       ...result,
       text: this.documents.get(result.id) ?? '',
     }));
   }
 
-  /**
-   * Remove a document by ID
-   */
   async remove(id: string): Promise<boolean> {
     this.documents.delete(id);
     const removed = this.vectorStore.remove(id);
@@ -213,32 +193,21 @@ export class SemanticSearch<T = unknown> {
     return removed;
   }
 
-  /**
-   * Clear all documents
-   */
   async clear(): Promise<void> {
     this.vectorStore.clear();
     this.documents.clear();
     await this.autoPersist();
   }
 
-  /**
-   * Get number of documents indexed
-   */
   size(): number {
     return this.vectorStore.size();
   }
 
-  /**
-   * Check if initialized
-   */
   isInitialized(): boolean {
     return this.embedder.isInitialized();
   }
 
-  /**
-   * Export all documents and vectors (for persistence)
-   */
+  /** For persistence */
   export(): Array<{
     id: string;
     text: string;
@@ -254,9 +223,7 @@ export class SemanticSearch<T = unknown> {
     }));
   }
 
-  /**
-   * Import documents and vectors (from persistence)
-   */
+  /** From persistence */
   import(
     data: Array<{
       id: string;
@@ -271,10 +238,7 @@ export class SemanticSearch<T = unknown> {
     }
   }
 
-  /**
-   * Manually persist the index to disk
-   * Useful when autoSave is disabled but you want to save at specific points
-   */
+  /** Manual save (when autoSave is disabled) */
   async persist(): Promise<void> {
     if (!this.config.storePath) {
       throw new Error('storePath must be configured to use persist()');

@@ -62,25 +62,17 @@ export class VectorStore<T = unknown> {
     };
   }
 
-  /**
-   * Add a vector to the store
-   */
   add(id: string, vector: number[], metadata?: T): void {
     this.vectors.set(id, { id, vector, metadata });
   }
 
-  /**
-   * Add multiple vectors in batch
-   */
   addBatch(entries: Array<{ id: string; vector: number[]; metadata?: T }>): void {
     for (const entry of entries) {
       this.add(entry.id, entry.vector, entry.metadata);
     }
   }
 
-  /**
-   * Search for similar vectors using cosine similarity
-   */
+  /** Using cosine similarity */
   search(
     queryVector: number[],
     options?: {
@@ -94,7 +86,6 @@ export class VectorStore<T = unknown> {
     const limit = options?.limit ?? this.config.defaultLimit;
 
     for (const entry of this.vectors.values()) {
-      // Apply filter if provided
       if (options?.filter && !options.filter(entry.metadata)) {
         continue;
       }
@@ -110,57 +101,37 @@ export class VectorStore<T = unknown> {
       }
     }
 
-    // Sort by similarity (descending)
     results.sort((a, b) => b.similarity - a.similarity);
 
     return results.slice(0, limit);
   }
 
-  /**
-   * Get a vector by ID
-   */
   get(id: string): VectorEntry<T> | undefined {
     return this.vectors.get(id);
   }
 
-  /**
-   * Remove a vector by ID
-   */
   remove(id: string): boolean {
     return this.vectors.delete(id);
   }
 
-  /**
-   * Clear all vectors
-   */
   clear(): void {
     this.vectors.clear();
   }
 
-  /**
-   * Get number of vectors in store
-   */
   size(): number {
     return this.vectors.size;
   }
 
-  /**
-   * Get all vector IDs
-   */
   keys(): string[] {
     return Array.from(this.vectors.keys());
   }
 
-  /**
-   * Export all vectors (for persistence)
-   */
+  /** For persistence */
   export(): VectorEntry<T>[] {
     return Array.from(this.vectors.values());
   }
 
-  /**
-   * Import vectors (from persistence)
-   */
+  /** From persistence */
   import(entries: VectorEntry<T>[]): void {
     for (const entry of entries) {
       this.vectors.set(entry.id, entry);
@@ -168,10 +139,7 @@ export class VectorStore<T = unknown> {
   }
 }
 
-/**
- * Calculate cosine similarity between two vectors
- * Returns a value between -1 and 1, where 1 means identical direction
- */
+/** Returns -1 to 1, where 1 = identical direction */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) {
     throw new Error(`Vector dimension mismatch: ${a.length} vs ${b.length}`);
@@ -203,15 +171,12 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / (magnitudeA * magnitudeB);
 }
 
-/**
- * Normalize a vector to unit length
- * Useful for storing vectors in a normalized form
- */
+/** Normalize to unit length */
 export function normalizeVector(vector: number[]): number[] {
   const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
 
   if (magnitude === 0) {
-    return vector.slice(); // Return copy
+    return vector.slice();
   }
 
   return vector.map((val) => val / magnitude);
