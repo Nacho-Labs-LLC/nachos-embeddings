@@ -88,6 +88,70 @@ const search = new SemanticSearch({
 });
 ```
 
+### Auto-persistence (NEW in v0.3.0)
+
+Automatically save the index to disk after every write operation:
+
+```typescript
+const search = new SemanticSearch({
+  autoSave: true,
+  storePath: '.semantic-store.json',
+});
+
+await search.init();
+
+// Index automatically persists after every add/remove
+await search.addDocument({ id: '1', text: 'foo' }); // Saves to disk
+await search.remove('1');                            // Saves to disk
+
+// On startup, load the saved index:
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
+
+if (existsSync('.semantic-store.json')) {
+  const data = JSON.parse(await readFile('.semantic-store.json', 'utf-8'));
+  search.import(data);
+}
+```
+
+**Or manually control persistence:**
+
+```typescript
+const search = new SemanticSearch({
+  storePath: '.semantic-store.json',
+  // autoSave: false (default)
+});
+
+// ... add documents ...
+
+// Save manually when ready
+await search.persist();
+```
+
+### Deduplication (NEW in v0.3.0)
+
+Prevent duplicate content with different IDs:
+
+```typescript
+const search = new SemanticSearch({
+  deduplication: true, // Default: true
+});
+
+await search.addDocument({ id: '1', text: 'foo' });
+await search.addDocument({ id: '2', text: 'foo' }); // ⚠️  Warns and skips
+
+// Check console:
+// [SemanticSearch] Duplicate content detected: "2" matches "1". Skipping.
+```
+
+Disable if you intentionally want duplicate content:
+
+```typescript
+const search = new SemanticSearch({
+  deduplication: false,
+});
+```
+
 ### Similarity threshold
 
 ```typescript
@@ -102,11 +166,21 @@ const results = await search.search('query', {
 });
 ```
 
-### Filtering
+### Metadata filtering
+
+Filter search results by metadata fields:
 
 ```typescript
 const results = await search.search('query', {
   filter: (metadata) => metadata?.kind === 'preference',
+});
+
+// Combine multiple filters
+const results = await search.search('auth patterns', {
+  filter: (meta) => 
+    meta?.kind === 'decision' && 
+    meta?.date > '2026-01-01' &&
+    meta?.tags?.includes('security'),
 });
 ```
 

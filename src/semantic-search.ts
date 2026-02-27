@@ -4,6 +4,9 @@
 
 import { Embedder } from './embedder.js';
 import { VectorStore, type SearchResult } from './vector-store.js';
+import { writeFile, mkdir } from 'fs/promises';
+import { dirname } from 'path';
+import { existsSync } from 'fs';
 
 export interface SemanticSearchConfig {
   /**
@@ -29,6 +32,24 @@ export interface SemanticSearchConfig {
    * @default false
    */
   progressLogging?: boolean;
+
+  /**
+   * Enable automatic persistence after every write operation
+   * @default false
+   */
+  autoSave?: boolean;
+
+  /**
+   * Path to save/load the search index
+   * Required if autoSave is true
+   */
+  storePath?: string;
+
+  /**
+   * Enable exact text deduplication (prevents duplicate content with different IDs)
+   * @default true
+   */
+  deduplication?: boolean;
 }
 
 export interface Document<T = unknown> {
@@ -61,8 +82,18 @@ export class SemanticSearch<T = unknown> {
   private embedder: Embedder;
   private vectorStore: VectorStore<T>;
   private documents = new Map<string, string>(); // id -> original text
+  private config: SemanticSearchConfig;
 
   constructor(config: SemanticSearchConfig = {}) {
+    this.config = {
+      deduplication: config.deduplication ?? true,
+      ...config,
+    };
+
+    if (this.config.autoSave && !this.config.storePath) {
+      throw new Error('storePath is required when autoSave is enabled');
+    }
+
     this.embedder = new Embedder({
       ...(config.model !== undefined && { model: config.model }),
       ...(config.cacheDir !== undefined && { cacheDir: config.cacheDir }),
@@ -81,28 +112,72 @@ export class SemanticSearch<T = unknown> {
   }
 
   /**
+   * Auto-persist the index if autoSave is enabled
+   */
+  private async autoPersist(): Promise<void> {
+    if (this.config.autoSave && this.config.storePath) {
+      const dir = dirname(this.config.storePath);
+      if (!existsSync(dir)) {
+        await mkdir(dir, { recursive: true });
+      }
+      await writeFile(this.config.storePath, JSON.stringify(this.export(), null, 2), 'utf-8');
+    }
+  }
+
+  /**
    * Add a document to the search index
    */
   async addDocument(doc: Document<T>): Promise<void> {
+    // Deduplication check
+    if (this.config.deduplication) {
+      for (const [existingId, existingText] of this.documents.entries()) {
+        if (existingText === doc.text) {
+          console.warn(
+            `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`
+          );
+          return;
+        }
+      }
+    }
+
     const vector = await this.embedder.embed(doc.text);
     this.vectorStore.add(doc.id, vector, doc.metadata);
     this.documents.set(doc.id, doc.text);
+    await this.autoPersist();
   }
 
   /**
    * Add multiple documents in batch (more efficient)
    */
   async addDocuments(docs: Document<T>[]): Promise<void> {
-    const texts = docs.map((d) => d.text);
+    // Apply deduplication if enabled
+    let filteredDocs = docs;
+    if (this.config.deduplication) {
+      const seenTexts = new Set<string>(this.documents.values());
+      filteredDocs = docs.filter((doc) => {
+        if (seenTexts.has(doc.text)) {
+          console.warn(
+            `[SemanticSearch] Duplicate content detected in batch: "${doc.id}". Skipping.`
+          );
+          return false;
+        }
+        seenTexts.add(doc.text);
+        return true;
+      });
+    }
+
+    const texts = filteredDocs.map((d) => d.text);
     const vectors = await this.embedder.embedBatch(texts);
 
-    for (let i = 0; i < docs.length; i++) {
-      const doc = docs[i];
+    for (let i = 0; i < filteredDocs.length; i++) {
+      const doc = filteredDocs[i];
       const vector = vectors[i];
       if (!doc || !vector) continue;
       this.vectorStore.add(doc.id, vector, doc.metadata);
       this.documents.set(doc.id, doc.text);
     }
+
+    await this.autoPersist();
   }
 
   /**
@@ -129,17 +204,22 @@ export class SemanticSearch<T = unknown> {
   /**
    * Remove a document by ID
    */
-  remove(id: string): boolean {
+  async remove(id: string): Promise<boolean> {
     this.documents.delete(id);
-    return this.vectorStore.remove(id);
+    const removed = this.vectorStore.remove(id);
+    if (removed) {
+      await this.autoPersist();
+    }
+    return removed;
   }
 
   /**
    * Clear all documents
    */
-  clear(): void {
+  async clear(): Promise<void> {
     this.vectorStore.clear();
     this.documents.clear();
+    await this.autoPersist();
   }
 
   /**
@@ -189,5 +269,20 @@ export class SemanticSearch<T = unknown> {
       this.vectorStore.add(item.id, item.vector, item.metadata);
       this.documents.set(item.id, item.text);
     }
+  }
+
+  /**
+   * Manually persist the index to disk
+   * Useful when autoSave is disabled but you want to save at specific points
+   */
+  async persist(): Promise<void> {
+    if (!this.config.storePath) {
+      throw new Error('storePath must be configured to use persist()');
+    }
+    const dir = dirname(this.config.storePath);
+    if (!existsSync(dir)) {
+      await mkdir(dir, { recursive: true });
+    }
+    await writeFile(this.config.storePath, JSON.stringify(this.export(), null, 2), 'utf-8');
   }
 }
