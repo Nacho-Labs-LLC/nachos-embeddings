@@ -43,15 +43,15 @@ export class TransformersProvider implements EmbeddingProvider {
     }
 
     if (this.config.progressLogging) {
-      console.log(`[Embedder] Loading model: ${this.config.model}`);
-      console.log(`[Embedder] Cache dir: ${this.config.cacheDir}`);
+      console.log(`[TransformersProvider] Loading model: ${this.config.model}`);
+      console.log(`[TransformersProvider] Cache dir: ${this.config.cacheDir}`);
     }
 
     this.pipeline = await pipeline('feature-extraction', this.config.model);
     this.initialized = true;
 
     if (this.config.progressLogging) {
-      console.log('[Embedder] Model loaded successfully');
+      console.log('[TransformersProvider] Model loaded successfully');
     }
   }
 

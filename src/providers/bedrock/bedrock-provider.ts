@@ -166,6 +166,10 @@ export class BedrockProvider implements EmbeddingProvider {
       clientConfig['endpoint'] = this.resolvedConfig.endpoint;
     }
 
+    if (this.resolvedConfig.timeout) {
+      clientConfig['requestTimeout'] = this.resolvedConfig.timeout;
+    }
+
     this.client = new BedrockRuntimeClient(clientConfig);
 
     if (this.resolvedConfig.progressLogging) {

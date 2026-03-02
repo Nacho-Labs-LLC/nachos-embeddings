@@ -6,7 +6,7 @@ Local, privacy-first vector embeddings and semantic search with a modular provid
 
 - **Node.js 18+** (uses ESM and top-level await)
 - **Internet connection on first run** to download the embedding model (~25MB, cached permanently after that)
-- **For Bedrock**: AWS account with Bedrock model access enabled
+- **For Bedrock**: Node.js 20+, AWS account with Bedrock model access enabled
 
 ## Features
 

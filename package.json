@@ -72,10 +72,18 @@
     "@huggingface/transformers": "^3.8.0"
   },
   "peerDependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.0.0"
+    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
+    "@aws-sdk/credential-provider-ini": "^3.0.0",
+    "@aws-sdk/credential-providers": "^3.0.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-bedrock-runtime": {
+      "optional": true
+    },
+    "@aws-sdk/credential-provider-ini": {
+      "optional": true
+    },
+    "@aws-sdk/credential-providers": {
       "optional": true
     }
   },

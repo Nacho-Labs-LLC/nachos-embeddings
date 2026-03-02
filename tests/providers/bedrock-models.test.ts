@@ -151,12 +151,7 @@ describe('resolveModelAdapter', () => {
   });
 
   it('lists supported models in error message', () => {
-    try {
-      resolveModelAdapter('bad');
-    } catch (e) {
-      const msg = (e as Error).message;
-      expect(msg).toContain('amazon.titan-embed-text-v2:0');
-      expect(msg).toContain('cohere.embed-english-v3');
-    }
+    expect(() => resolveModelAdapter('bad')).toThrow('amazon.titan-embed-text-v2:0');
+    expect(() => resolveModelAdapter('bad')).toThrow('cohere.embed-english-v3');
   });
 });
