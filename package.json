@@ -1,7 +1,7 @@
 {
   "name": "@nacho-labs/nachos-embeddings",
-  "version": "0.3.0",
-  "description": "Local, privacy-first vector embeddings and semantic search using Transformers.js",
+  "version": "0.4.0",
+  "description": "Modular vector embeddings and semantic search — local Transformers.js or AWS Bedrock providers",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/types.d.ts",
+      "import": "./dist/providers/types.js"
+    },
+    "./bedrock": {
+      "types": "./dist/providers/bedrock/index.d.ts",
+      "import": "./dist/providers/bedrock/index.js"
     }
   },
   "files": [
@@ -46,7 +54,10 @@
     "privacy",
     "ai",
     "nlp",
-    "similarity"
+    "similarity",
+    "bedrock",
+    "aws",
+    "provider"
   ],
   "author": "Nate Richardson <hello@naterichardson.com> (https://naterichardson.com)",
   "license": "MIT",
@@ -60,7 +71,26 @@
   "dependencies": {
     "@huggingface/transformers": "^3.8.0"
   },
+  "peerDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
+    "@aws-sdk/credential-provider-ini": "^3.0.0",
+    "@aws-sdk/credential-providers": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-bedrock-runtime": {
+      "optional": true
+    },
+    "@aws-sdk/credential-provider-ini": {
+      "optional": true
+    },
+    "@aws-sdk/credential-providers": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
+    "@aws-sdk/credential-provider-ini": "^3.972.13",
+    "@aws-sdk/credential-providers": "^3.1000.0",
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",

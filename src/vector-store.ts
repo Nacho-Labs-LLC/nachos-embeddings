@@ -5,7 +5,7 @@
 export interface VectorStoreConfig {
   /**
    * Minimum similarity score (0-1) for search results
-   * @default 0.7
+   * @default 0.4
    */
   minSimilarity?: number;
 
@@ -56,7 +56,7 @@ export class VectorStore<T = unknown> {
 
   constructor(config: VectorStoreConfig = {}) {
     this.config = {
-      minSimilarity: config.minSimilarity ?? 0.7,
+      minSimilarity: config.minSimilarity ?? 0.4,
       defaultLimit: config.defaultLimit ?? 10,
       cacheEmbeddings: config.cacheEmbeddings ?? true,
     };

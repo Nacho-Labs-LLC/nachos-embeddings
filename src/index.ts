@@ -21,7 +21,7 @@
  * ```
  */
 
-export { SemanticSearch, type SemanticSearchConfig, type Document } from './semantic-search.js';
+export { SemanticSearch, type SemanticSearchConfig, type SemanticSearchOptions, type Document } from './semantic-search.js';
 
 export {
   EnhancedSemanticSearch,
@@ -40,3 +40,8 @@ export {
 } from './vector-store.js';
 
 export { chunkText, estimateTokens, textSimilarity, normalizeText } from './utils.js';
+
+// Provider system
+export type { EmbeddingProvider, BaseProviderConfig } from './providers/types.js';
+export { TransformersProvider, type TransformersProviderConfig } from './providers/transformers-provider.js';
+export { createEmbedder, type ProviderType, type ProviderConfigMap } from './providers/factory.js';

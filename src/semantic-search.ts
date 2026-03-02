@@ -2,6 +2,7 @@
  * High-level semantic search API combining embedder + vector store
  */
 
+import type { EmbeddingProvider } from './providers/types.js';
 import { Embedder } from './embedder.js';
 import { VectorStore, type SearchResult } from './vector-store.js';
 import { writeFile, mkdir } from 'fs/promises';
@@ -17,7 +18,7 @@ export interface SemanticSearchConfig {
 
   /**
    * Minimum similarity score (0-1)
-   * @default 0.7
+   * @default 0.4
    */
   minSimilarity?: number;
 
@@ -52,6 +53,13 @@ export interface SemanticSearchConfig {
   deduplication?: boolean;
 }
 
+export interface SemanticSearchOptions extends SemanticSearchConfig {
+  /**
+   * Custom embedding provider (overrides model/cacheDir/progressLogging)
+   */
+  provider?: EmbeddingProvider | undefined;
+}
+
 export interface Document<T = unknown> {
   id: string;
   text: string;
@@ -79,12 +87,12 @@ export interface Document<T = unknown> {
  * ```
  */
 export class SemanticSearch<T = unknown> {
-  private embedder: Embedder;
+  private embedder: EmbeddingProvider;
   private vectorStore: VectorStore<T>;
   private documents = new Map<string, string>(); // id -> original text
   private config: SemanticSearchConfig;
 
-  constructor(config: SemanticSearchConfig = {}) {
+  constructor(config: SemanticSearchOptions = {}) {
     this.config = {
       deduplication: config.deduplication ?? true,
       ...config,
@@ -94,7 +102,7 @@ export class SemanticSearch<T = unknown> {
       throw new Error('storePath is required when autoSave is enabled');
     }
 
-    this.embedder = new Embedder({
+    this.embedder = config.provider ?? new Embedder({
       ...(config.model !== undefined && { model: config.model }),
       ...(config.cacheDir !== undefined && { cacheDir: config.cacheDir }),
       ...(config.progressLogging !== undefined && { progressLogging: config.progressLogging }),
