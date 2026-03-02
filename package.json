@@ -1,6 +1,6 @@
 {
   "name": "@nacho-labs/nachos-embeddings",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Modular vector embeddings and semantic search — local Transformers.js or AWS Bedrock providers",
   "type": "module",
   "main": "./dist/index.js",
