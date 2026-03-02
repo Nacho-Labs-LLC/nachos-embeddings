@@ -1,18 +1,21 @@
 # @nacho-labs/nachos-embeddings
 
-Local, privacy-first vector embeddings and semantic search. Runs entirely locally using [Transformers.js](https://huggingface.co/docs/transformers.js) — no API keys, no cloud services, no costs.
+Local, privacy-first vector embeddings and semantic search with a modular provider architecture. Runs locally using [Transformers.js](https://huggingface.co/docs/transformers.js) by default, or connect to [AWS Bedrock](https://aws.amazon.com/bedrock/) for cloud-scale embedding models.
 
 ## Prerequisites
 
 - **Node.js 18+** (uses ESM and top-level await)
 - **Internet connection on first run** to download the embedding model (~25MB, cached permanently after that)
+- **For Bedrock**: AWS account with Bedrock model access enabled
 
 ## Features
 
-- **Local embeddings** — No API calls, no costs, no rate limits
+- **Local embeddings** — No API calls, no costs, no rate limits (default)
+- **AWS Bedrock support** — Amazon Titan V2, Cohere Embed v3, or bring your own model adapter
+- **Modular providers** — Swap embedding backends without changing application code
 - **Semantic search** — Find similar text even with different wording
-- **Privacy-first** — Data never leaves your machine
-- **Lightweight** — ~25MB model download, then runs offline
+- **Privacy-first** — Local provider keeps data on your machine
+- **Lightweight** — ~25MB model download for local, then runs offline
 - **Fast** — In-memory vector index with cosine similarity
 - **Standalone** — Zero framework dependencies, use anywhere
 
@@ -156,7 +159,7 @@ const search = new SemanticSearch({
 
 ```typescript
 const search = new SemanticSearch({
-  minSimilarity: 0.7, // Default (range: 0-1)
+  minSimilarity: 0.4, // Default (range: 0-1)
 });
 
 // Or override per search
@@ -183,6 +186,164 @@ const results = await search.search('auth patterns', {
     meta?.tags?.includes('security'),
 });
 ```
+
+## Provider system
+
+nachos-embeddings uses a modular provider architecture. The default `Embedder` uses local Transformers.js, but you can swap in any provider that implements the `EmbeddingProvider` interface.
+
+### AWS Bedrock
+
+Use Amazon Titan, Cohere Embed, or other Bedrock-hosted embedding models.
+
+**Install the AWS SDK** (optional peer dependency — only needed if using Bedrock):
+
+```bash
+npm install @aws-sdk/client-bedrock-runtime
+```
+
+**Quick start:**
+
+```typescript
+import { SemanticSearch } from '@nacho-labs/nachos-embeddings';
+import { BedrockProvider } from '@nacho-labs/nachos-embeddings/bedrock';
+
+const search = new SemanticSearch({
+  provider: new BedrockProvider({
+    region: 'us-east-1',
+    modelId: 'amazon.titan-embed-text-v2:0',
+  }),
+});
+
+await search.init();
+await search.addDocument({ id: 'doc1', text: 'Hello world' });
+const results = await search.search('greetings');
+```
+
+**Supported models:**
+
+| Model ID | Dimensions | Notes |
+| ---------- | ----------- | ------- |
+| `amazon.titan-embed-text-v2:0` | 256, 512, or 1024 | Default. Configurable dimensions. |
+| `cohere.embed-english-v3` | 1024 | English-optimized |
+| `cohere.embed-multilingual-v3` | 1024 | 100+ languages |
+
+**Model options:**
+
+```typescript
+// Titan V2 — configurable dimensions and normalization
+new BedrockProvider({
+  modelId: 'amazon.titan-embed-text-v2:0',
+  modelOptions: {
+    dimensions: 256,    // 256, 512, or 1024 (default: 1024)
+    normalize: true,    // default: true
+  },
+});
+
+// Cohere — configurable input type for search optimization
+new BedrockProvider({
+  modelId: 'cohere.embed-english-v3',
+  modelOptions: {
+    inputType: 'search_document',  // 'search_document' | 'search_query' | 'classification' | 'clustering'
+    truncate: 'END',               // 'NONE' | 'START' | 'END'
+  },
+});
+```
+
+### Credential strategies
+
+```typescript
+// Default — uses AWS SDK credential chain (env vars, ~/.aws/credentials, instance profile)
+new BedrockProvider({ credentials: { strategy: 'default' } });
+
+// Named profile
+new BedrockProvider({
+  credentials: { strategy: 'profile', profile: 'my-profile' },
+});
+
+// Explicit keys
+new BedrockProvider({
+  credentials: {
+    strategy: 'explicit',
+    accessKeyId: 'AKID...',
+    secretAccessKey: 'SECRET...',
+    sessionToken: 'TOKEN...', // optional
+  },
+});
+
+// Assume IAM role
+new BedrockProvider({
+  credentials: {
+    strategy: 'role',
+    roleArn: 'arn:aws:iam::123456789:role/bedrock-access',
+    roleSessionName: 'nachos',  // optional
+    externalId: 'ext-id',       // optional
+  },
+});
+```
+
+### Advanced Bedrock configuration
+
+```typescript
+new BedrockProvider({
+  region: 'us-west-2',
+  modelId: 'amazon.titan-embed-text-v2:0',
+  endpoint: 'https://vpce-xxx.bedrock-runtime.us-west-2.vpce.amazonaws.com', // VPC endpoint
+  batchSize: 25,        // texts per batch chunk (default: 25)
+  maxConcurrency: 5,    // parallel API calls within a batch (default: 5)
+  timeout: 30000,       // request timeout in ms (default: 30000)
+  retry: {
+    maxAttempts: 3,      // retry count for transient errors (default: 3)
+    backoffMs: 200,      // base backoff, doubles per retry (default: 200)
+  },
+  progressLogging: true, // log init/dimension detection
+});
+```
+
+### Custom model adapters
+
+For Bedrock models not built-in, implement `BedrockModelAdapter`:
+
+```typescript
+import { BedrockProvider } from '@nacho-labs/nachos-embeddings/bedrock';
+import type { BedrockModelAdapter } from '@nacho-labs/nachos-embeddings/bedrock';
+
+const myAdapter: BedrockModelAdapter = {
+  modelName: 'My Custom Model',
+  defaultDimension: 768,
+  formatRequest(text, options) {
+    return JSON.stringify({ input: text, ...options });
+  },
+  parseResponse(body) {
+    return JSON.parse(body).vector;
+  },
+};
+
+const provider = new BedrockProvider({
+  modelId: 'my-company.custom-embed-v1',
+  modelAdapter: myAdapter,
+});
+```
+
+### Using the factory
+
+```typescript
+import { createEmbedder } from '@nacho-labs/nachos-embeddings';
+
+// Local (default)
+const local = await createEmbedder('transformers');
+await local.init();
+
+// Bedrock
+const bedrock = await createEmbedder('bedrock', {
+  region: 'us-east-1',
+  modelId: 'amazon.titan-embed-text-v2:0',
+});
+await bedrock.init();
+```
+
+### Switching providers
+
+When switching between providers, note that **different models produce different vector dimensions** (e.g., Transformers.js default = 384d, Titan V2 = 1024d). Existing persisted vectors are incompatible with a different dimension — you must re-index your documents after switching.
 
 ## Persistence
 
@@ -449,13 +610,13 @@ dedicated vector database like [Qdrant](https://qdrant.tech) or
 
 ## Comparison
 
-| Feature | nachos-embeddings | OpenAI | Pinecone |
-|---------|-------------------|--------|----------|
-| Cost | Free | ~$0.0001/1k chars | ~$70/month |
-| Setup | `npm install` | API key | Account + API |
-| Privacy | 100% local | Cloud | Cloud |
+| Feature | Local (default) | Bedrock | OpenAI |
+| ------- | --------------- | ------- | ------ |
+| Cost | Free | ~$0.0001/1k tokens | ~$0.0001/1k chars |
+| Setup | `npm install` | + AWS credentials | API key |
+| Privacy | 100% local | AWS account | Cloud |
 | Offline | Yes | No | No |
-| Quality | Good (85-90%) | Excellent (95%) | N/A (database) |
+| Quality | Good (MiniLM) | Excellent (Titan V2, Cohere) | Excellent |
 
 ## API reference
 
@@ -465,7 +626,7 @@ High-level API combining embedder and vector store.
 
 | Method | Description |
 | -------- | ------------- |
-| `new SemanticSearch(config?)` | Create instance. Config: `model`, `minSimilarity`, `cacheDir`, `progressLogging` |
+| `new SemanticSearch(config?)` | Create instance. Config: `provider`, `model`, `minSimilarity`, `cacheDir`, `progressLogging` |
 | `init()` | Load the embedding model. **Must be called before any other method.** |
 | `addDocument(doc)` | Add `{ id, text, metadata? }` to the index |
 | `addDocuments(docs)` | Batch add (more efficient for multiple documents) |

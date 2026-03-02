@@ -1,28 +1,13 @@
 /**
  * Text embedding using Transformers.js (local, no API needed)
+ *
+ * This is a backward-compatible wrapper around TransformersProvider.
  */
 
-import { pipeline, env } from '@huggingface/transformers';
+import type { EmbeddingProvider } from './providers/types.js';
+import { TransformersProvider, type TransformersProviderConfig } from './providers/transformers-provider.js';
 
-export interface EmbedderConfig {
-  /**
-   * Model to use for embeddings
-   * @default 'Xenova/all-MiniLM-L6-v2'
-   */
-  model?: string;
-
-  /**
-   * Cache directory for downloaded models
-   * @default '.cache/transformers'
-   */
-  cacheDir?: string;
-
-  /**
-   * Enable progress logging during model download
-   * @default false
-   */
-  progressLogging?: boolean;
-}
+export type EmbedderConfig = TransformersProviderConfig;
 
 /**
  * Text embedder using local transformer models
@@ -39,96 +24,41 @@ export interface EmbedderConfig {
  * console.log(batch.length); // 3
  * ```
  */
-export class Embedder {
-  private pipeline: any = null;
-  private config: Required<EmbedderConfig>;
-  private initialized = false;
+export class Embedder implements EmbeddingProvider {
+  readonly name = 'transformers';
+
+  private provider: TransformersProvider;
 
   constructor(config: EmbedderConfig = {}) {
-    this.config = {
-      model: config.model ?? 'Xenova/all-MiniLM-L6-v2',
-      cacheDir: config.cacheDir ?? '.cache/transformers',
-      progressLogging: config.progressLogging ?? false,
-    };
-
-    env.cacheDir = this.config.cacheDir;
-    env.allowLocalModels = false;
+    this.provider = new TransformersProvider(config);
   }
 
   /** Call before using embed() or embedBatch() */
   async init(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    if (this.config.progressLogging) {
-      console.log(`[Embedder] Loading model: ${this.config.model}`);
-      console.log(`[Embedder] Cache dir: ${this.config.cacheDir}`);
-    }
-
-    this.pipeline = await pipeline('feature-extraction', this.config.model);
-    this.initialized = true;
-
-    if (this.config.progressLogging) {
-      console.log('[Embedder] Model loaded successfully');
-    }
+    return this.provider.init();
   }
 
   /** @throws Error if not initialized */
   async embed(text: string): Promise<number[]> {
-    if (!this.initialized || !this.pipeline) {
-      throw new Error('Embedder not initialized. Call init() first.');
-    }
-
-    const output = await this.pipeline(text, {
-      pooling: 'mean',
-      normalize: true,
-    });
-
-    return Array.from(output.data);
+    return this.provider.embed(text);
   }
 
   /** More efficient than calling embed() multiple times */
   async embedBatch(texts: string[]): Promise<number[][]> {
-    if (!this.initialized || !this.pipeline) {
-      throw new Error('Embedder not initialized. Call init() first.');
-    }
-
-    const embeddings: number[][] = [];
-
-    // Process in batches to avoid memory issues
-    const BATCH_SIZE = 32;
-    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-      const batch = texts.slice(i, i + BATCH_SIZE);
-
-      for (const text of batch) {
-        const output = await this.pipeline(text, {
-          pooling: 'mean',
-          normalize: true,
-        });
-        embeddings.push(Array.from(output.data));
-      }
-    }
-
-    return embeddings;
+    return this.provider.embedBatch(texts);
   }
 
   /** Returns null if not initialized */
   async getDimension(): Promise<number | null> {
-    if (!this.initialized) {
-      return null;
-    }
-
-    const testVector = await this.embed('test');
-    return testVector.length;
+    return this.provider.getDimension();
   }
 
   isInitialized(): boolean {
-    return this.initialized;
+    return this.provider.isInitialized();
   }
 
   getConfig(): Readonly<Required<EmbedderConfig>> {
-    return { ...this.config };
+    return this.provider.getConfig();
   }
 }
 

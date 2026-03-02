@@ -12,7 +12,7 @@ describe('SemanticSearch', () => {
     expect(search.size()).toBe(0);
   });
 
-  it('removes documents by id', () => {
+  it('removes documents by id', async () => {
     const search = new SemanticSearch();
     // Import pre-computed data to test remove without needing model
     search.import([
@@ -20,18 +20,18 @@ describe('SemanticSearch', () => {
       { id: 'doc2', text: 'world', vector: [0, 1, 0], metadata: undefined },
     ]);
     expect(search.size()).toBe(2);
-    expect(search.remove('doc1')).toBe(true);
+    expect(await search.remove('doc1')).toBe(true);
     expect(search.size()).toBe(1);
-    expect(search.remove('nonexistent')).toBe(false);
+    expect(await search.remove('nonexistent')).toBe(false);
   });
 
-  it('clears all documents', () => {
+  it('clears all documents', async () => {
     const search = new SemanticSearch();
     search.import([
       { id: 'doc1', text: 'hello', vector: [1, 0, 0], metadata: undefined },
       { id: 'doc2', text: 'world', vector: [0, 1, 0], metadata: undefined },
     ]);
-    search.clear();
+    await search.clear();
     expect(search.size()).toBe(0);
   });
 

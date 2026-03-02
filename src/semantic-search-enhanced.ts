@@ -1,11 +1,11 @@
-import { SemanticSearch, type SemanticSearchConfig, type Document } from './semantic-search.js';
+import { SemanticSearch, type SemanticSearchOptions, type Document } from './semantic-search.js';
 import { type SearchResult } from './vector-store.js';
 import { chunkText, normalizeText, estimateTokens } from './utils.js';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export interface EnhancedSemanticSearchConfig extends SemanticSearchConfig {
+export interface EnhancedSemanticSearchConfig extends SemanticSearchOptions {
   autoSave?: boolean;
   storePath?: string;
   autoChunk?: boolean;
@@ -25,7 +25,7 @@ interface DocumentMetadata {
 }
 
 export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadata> extends SemanticSearch<T> {
-  private enhancedConfig: Required<EnhancedSemanticSearchConfig>;
+  private enhancedConfig: Omit<Required<EnhancedSemanticSearchConfig>, 'provider'>;
   private saveQueue = Promise.resolve();
   private textHashes = new Map<string, string>();
 
@@ -35,7 +35,7 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
     this.enhancedConfig = {
       ...config,
       model: config.model ?? 'Xenova/all-MiniLM-L6-v2',
-      minSimilarity: config.minSimilarity ?? 0.7,
+      minSimilarity: config.minSimilarity ?? 0.4,
       cacheDir: config.cacheDir ?? '.cache/transformers',
       progressLogging: config.progressLogging ?? false,
       autoSave: config.autoSave ?? false,
@@ -269,7 +269,7 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
     await this.save();
   }
 
-  getConfig(): Readonly<Required<EnhancedSemanticSearchConfig>> {
+  getConfig(): Readonly<Omit<Required<EnhancedSemanticSearchConfig>, 'provider'>> {
     return { ...this.enhancedConfig };
   }
 }
