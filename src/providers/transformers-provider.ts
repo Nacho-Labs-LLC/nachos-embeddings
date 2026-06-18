@@ -2,7 +2,7 @@
  * Embedding provider using Transformers.js (local, no API needed)
  */
 
-import { pipeline, env } from '@huggingface/transformers';
+import { pipeline, env, FeatureExtractionPipeline } from '@huggingface/transformers';
 import type { EmbeddingProvider, BaseProviderConfig } from './types.js';
 
 export interface TransformersProviderConfig extends BaseProviderConfig {
@@ -22,7 +22,7 @@ export interface TransformersProviderConfig extends BaseProviderConfig {
 export class TransformersProvider implements EmbeddingProvider {
   readonly name = 'transformers';
 
-  private pipeline: any = null;
+  private pipeline: FeatureExtractionPipeline | null = null;
   private config: Required<TransformersProviderConfig>;
   private initialized = false;
 
