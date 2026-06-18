@@ -21,7 +21,7 @@ interface DocumentMetadata {
   timestamp?: number;
   chunkIndex?: number;
   parentId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadata> extends SemanticSearch<T> {
