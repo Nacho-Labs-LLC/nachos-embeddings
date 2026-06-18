@@ -21,14 +21,24 @@
  * ```
  */
 
-export { SemanticSearch, type SemanticSearchConfig, type SemanticSearchOptions, type Document } from './semantic-search.js';
+export {
+  SemanticSearch,
+  type SemanticSearchConfig,
+  type SemanticSearchOptions,
+  type Document,
+} from "./semantic-search.js";
 
 export {
   EnhancedSemanticSearch,
   type EnhancedSemanticSearchConfig,
-} from './semantic-search-enhanced.js';
+} from "./semantic-search-enhanced.js";
 
-export { Embedder, getGlobalEmbedder, resetGlobalEmbedder, type EmbedderConfig } from './embedder.js';
+export {
+  Embedder,
+  getGlobalEmbedder,
+  resetGlobalEmbedder,
+  type EmbedderConfig,
+} from "./embedder.js";
 
 export {
   VectorStore,
@@ -37,11 +47,26 @@ export {
   type VectorStoreConfig,
   type VectorEntry,
   type SearchResult,
-} from './vector-store.js';
+} from "./vector-store.js";
 
-export { chunkText, estimateTokens, textSimilarity, normalizeText } from './utils.js';
+export {
+  chunkText,
+  estimateTokens,
+  textSimilarity,
+  normalizeText,
+} from "./utils.js";
 
 // Provider system
-export type { EmbeddingProvider, BaseProviderConfig } from './providers/types.js';
-export { TransformersProvider, type TransformersProviderConfig } from './providers/transformers-provider.js';
-export { createEmbedder, type ProviderType, type ProviderConfigMap } from './providers/factory.js';
+export type {
+  EmbeddingProvider,
+  BaseProviderConfig,
+} from "./providers/types.js";
+export {
+  TransformersProvider,
+  type TransformersProviderConfig,
+} from "./providers/transformers-provider.js";
+export {
+  createEmbedder,
+  type ProviderType,
+  type ProviderConfigMap,
+} from "./providers/factory.js";

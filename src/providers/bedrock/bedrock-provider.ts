@@ -1,8 +1,8 @@
-import type { EmbeddingProvider, BaseProviderConfig } from '../types.js';
-import type { BedrockModelAdapter } from './models/types.js';
-import { resolveModelAdapter } from './models/index.js';
+import type { EmbeddingProvider, BaseProviderConfig } from "../types.js";
+import type { BedrockModelAdapter } from "./models/types.js";
+import { resolveModelAdapter } from "./models/index.js";
 
-export type CredentialStrategy = 'default' | 'profile' | 'explicit' | 'role';
+export type CredentialStrategy = "default" | "profile" | "explicit" | "role";
 
 export interface BedrockCredentials {
   strategy?: CredentialStrategy;
@@ -36,7 +36,8 @@ export interface BedrockProviderConfig extends BaseProviderConfig {
 interface ResolvedConfig {
   region: string;
   modelId: string;
-  credentials: Required<Pick<BedrockCredentials, 'strategy'>> & Omit<BedrockCredentials, 'strategy'>;
+  credentials: Required<Pick<BedrockCredentials, "strategy">> &
+    Omit<BedrockCredentials, "strategy">;
   endpoint: string | undefined;
   batchSize: number;
   maxConcurrency: number;
@@ -47,7 +48,7 @@ interface ResolvedConfig {
 }
 
 export class BedrockProvider implements EmbeddingProvider {
-  readonly name = 'bedrock';
+  readonly name = "bedrock";
 
   private client: any = null;
   private InvokeModelCommandCtor: any = null;
@@ -57,7 +58,7 @@ export class BedrockProvider implements EmbeddingProvider {
   private dimension: number | null = null;
 
   constructor(config: BedrockProviderConfig = {}) {
-    const modelId = config.modelId ?? 'amazon.titan-embed-text-v2:0';
+    const modelId = config.modelId ?? "amazon.titan-embed-text-v2:0";
 
     this.adapter = config.modelAdapter ?? resolveModelAdapter(modelId);
 
@@ -66,10 +67,10 @@ export class BedrockProvider implements EmbeddingProvider {
     }
 
     this.resolvedConfig = {
-      region: config.region ?? 'us-east-1',
+      region: config.region ?? "us-east-1",
       modelId,
       credentials: {
-        strategy: config.credentials?.strategy ?? 'default',
+        strategy: config.credentials?.strategy ?? "default",
         ...config.credentials,
       },
       endpoint: config.endpoint,
@@ -94,13 +95,13 @@ export class BedrockProvider implements EmbeddingProvider {
     let InvokeModelCommand: any;
 
     try {
-      const sdk = await import('@aws-sdk/client-bedrock-runtime');
+      const sdk = await import("@aws-sdk/client-bedrock-runtime");
       BedrockRuntimeClient = sdk.BedrockRuntimeClient;
       InvokeModelCommand = sdk.InvokeModelCommand;
     } catch {
       throw new Error(
-        '@aws-sdk/client-bedrock-runtime is required for BedrockProvider. ' +
-          'Install it: npm install @aws-sdk/client-bedrock-runtime',
+        "@aws-sdk/client-bedrock-runtime is required for BedrockProvider. " +
+          "Install it: npm install @aws-sdk/client-bedrock-runtime",
       );
     }
 
@@ -112,62 +113,65 @@ export class BedrockProvider implements EmbeddingProvider {
 
     const { strategy } = this.resolvedConfig.credentials;
 
-    if (strategy === 'profile') {
+    if (strategy === "profile") {
       try {
-        const { fromIni } = await import('@aws-sdk/credential-provider-ini');
+        const { fromIni } = await import("@aws-sdk/credential-provider-ini");
         const profile = this.resolvedConfig.credentials.profile;
-        clientConfig['credentials'] = fromIni(profile ? { profile } : {});
+        clientConfig["credentials"] = fromIni(profile ? { profile } : {});
       } catch {
         throw new Error(
-          '@aws-sdk/credential-provider-ini is required for profile credential strategy. ' +
-            'It should be available with @aws-sdk/client-bedrock-runtime.',
+          "@aws-sdk/credential-provider-ini is required for profile credential strategy. " +
+            "It should be available with @aws-sdk/client-bedrock-runtime.",
         );
       }
-    } else if (strategy === 'explicit') {
-      const { accessKeyId, secretAccessKey, sessionToken } = this.resolvedConfig.credentials;
+    } else if (strategy === "explicit") {
+      const { accessKeyId, secretAccessKey, sessionToken } =
+        this.resolvedConfig.credentials;
       if (!accessKeyId || !secretAccessKey) {
         throw new Error(
           "Explicit credential strategy requires 'accessKeyId' and 'secretAccessKey'.",
         );
       }
-      clientConfig['credentials'] = {
+      clientConfig["credentials"] = {
         accessKeyId,
         secretAccessKey,
         ...(sessionToken !== undefined ? { sessionToken } : {}),
       };
-    } else if (strategy === 'role') {
+    } else if (strategy === "role") {
       const { roleArn } = this.resolvedConfig.credentials;
       if (!roleArn) {
         throw new Error("Role credential strategy requires 'roleArn'.");
       }
       try {
-        const { fromTemporaryCredentials } = await import('@aws-sdk/credential-providers');
+        const { fromTemporaryCredentials } =
+          await import("@aws-sdk/credential-providers");
         const params: Record<string, unknown> = {
           params: {
             RoleArn: roleArn,
             RoleSessionName:
-              this.resolvedConfig.credentials.roleSessionName ?? 'nachos-embeddings',
+              this.resolvedConfig.credentials.roleSessionName ??
+              "nachos-embeddings",
             ...(this.resolvedConfig.credentials.externalId !== undefined
               ? { ExternalId: this.resolvedConfig.credentials.externalId }
               : {}),
           },
         };
-        clientConfig['credentials'] = fromTemporaryCredentials(params as any);
+        clientConfig["credentials"] = fromTemporaryCredentials(params as any);
       } catch {
         throw new Error(
-          '@aws-sdk/credential-providers is required for role credential strategy. ' +
-            'Install it: npm install @aws-sdk/credential-providers',
+          "@aws-sdk/credential-providers is required for role credential strategy. " +
+            "Install it: npm install @aws-sdk/credential-providers",
         );
       }
     }
     // 'default' strategy: no explicit credentials — SDK auto-resolves
 
     if (this.resolvedConfig.endpoint) {
-      clientConfig['endpoint'] = this.resolvedConfig.endpoint;
+      clientConfig["endpoint"] = this.resolvedConfig.endpoint;
     }
 
     if (this.resolvedConfig.timeout) {
-      clientConfig['requestTimeout'] = this.resolvedConfig.timeout;
+      clientConfig["requestTimeout"] = this.resolvedConfig.timeout;
     }
 
     this.client = new BedrockRuntimeClient(clientConfig);
@@ -179,26 +183,28 @@ export class BedrockProvider implements EmbeddingProvider {
     }
 
     // Probe dimension
-    const probeVector = await this.embedSingle('dimension probe');
+    const probeVector = await this.embedSingle("dimension probe");
     this.dimension = probeVector.length;
 
     this.initialized = true;
 
     if (this.resolvedConfig.progressLogging) {
-      console.log(`[BedrockProvider] Detected dimension: ${String(this.dimension)}`);
+      console.log(
+        `[BedrockProvider] Detected dimension: ${String(this.dimension)}`,
+      );
     }
   }
 
   async embed(text: string): Promise<number[]> {
     if (!this.initialized) {
-      throw new Error('BedrockProvider not initialized. Call init() first.');
+      throw new Error("BedrockProvider not initialized. Call init() first.");
     }
     return this.embedSingle(text);
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (!this.initialized) {
-      throw new Error('BedrockProvider not initialized. Call init() first.');
+      throw new Error("BedrockProvider not initialized. Call init() first.");
     }
 
     const results: number[][] = [];
@@ -206,7 +212,10 @@ export class BedrockProvider implements EmbeddingProvider {
 
     for (let i = 0; i < texts.length; i += batchSize) {
       const chunk = texts.slice(i, i + batchSize);
-      const chunkResults = await this.processWithConcurrency(chunk, maxConcurrency);
+      const chunkResults = await this.processWithConcurrency(
+        chunk,
+        maxConcurrency,
+      );
       results.push(...chunkResults);
     }
 
@@ -222,11 +231,23 @@ export class BedrockProvider implements EmbeddingProvider {
   }
 
   getConfig(): Readonly<ResolvedConfig> {
-    return { ...this.resolvedConfig };
+    const safeConfig = { ...this.resolvedConfig };
+
+    // Redact sensitive credentials
+    if (safeConfig.credentials) {
+      const { accessKeyId, secretAccessKey, sessionToken, ...safeCredentials } =
+        safeConfig.credentials;
+      safeConfig.credentials = safeCredentials as any;
+    }
+
+    return safeConfig;
   }
 
   private async embedSingle(text: string): Promise<number[]> {
-    const body = this.adapter.formatRequest(text, this.resolvedConfig.modelOptions);
+    const body = this.adapter.formatRequest(
+      text,
+      this.resolvedConfig.modelOptions,
+    );
     const responseBody = await this.invokeModel(body);
     return this.adapter.parseResponse(responseBody);
   }
@@ -238,7 +259,9 @@ export class BedrockProvider implements EmbeddingProvider {
     const results: number[][] = new Array(texts.length);
     let nextIndex = 0;
 
-    async function runWorker(embedFn: (text: string) => Promise<number[]>): Promise<void> {
+    async function runWorker(
+      embedFn: (text: string) => Promise<number[]>,
+    ): Promise<void> {
       while (nextIndex < texts.length) {
         const idx = nextIndex++;
         const text = texts[idx];
@@ -266,8 +289,8 @@ export class BedrockProvider implements EmbeddingProvider {
       const command = new this.InvokeModelCommandCtor({
         modelId: this.resolvedConfig.modelId,
         body,
-        contentType: 'application/json',
-        accept: 'application/json',
+        contentType: "application/json",
+        accept: "application/json",
       });
 
       const response = await this.client.send(command);
@@ -303,19 +326,19 @@ export class BedrockProvider implements EmbeddingProvider {
     if (error instanceof Error) {
       const name = error.name;
       if (
-        name === 'ThrottlingException' ||
-        name === 'ServiceUnavailableException' ||
-        name === 'TooManyRequestsException'
+        name === "ThrottlingException" ||
+        name === "ServiceUnavailableException" ||
+        name === "TooManyRequestsException"
       ) {
         return true;
       }
 
       const message = error.message;
       if (
-        message.includes('ECONNRESET') ||
-        message.includes('ETIMEDOUT') ||
-        message.includes('ECONNREFUSED') ||
-        message.includes('socket hang up')
+        message.includes("ECONNRESET") ||
+        message.includes("ETIMEDOUT") ||
+        message.includes("ECONNREFUSED") ||
+        message.includes("socket hang up")
       ) {
         return true;
       }
