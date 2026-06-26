@@ -90,7 +90,6 @@ export class SemanticSearch<T = unknown> {
   private embedder: EmbeddingProvider;
   private vectorStore: VectorStore<T>;
   private documents = new Map<string, string>(); // id -> original text
-  private documentTexts = new Map<string, string>(); // original text -> id
   private config: SemanticSearchConfig;
 
   constructor(config: SemanticSearchOptions = {}) {
@@ -129,19 +128,19 @@ export class SemanticSearch<T = unknown> {
 
   async addDocument(doc: Document<T>): Promise<void> {
     if (this.config.deduplication) {
-      const existingId = this.documentTexts.get(doc.text);
-      if (existingId !== undefined) {
-        console.warn(
-          `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`
-        );
-        return;
+      for (const [existingId, existingText] of this.documents.entries()) {
+        if (existingText === doc.text) {
+          console.warn(
+            `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`
+          );
+          return;
+        }
       }
     }
 
     const vector = await this.embedder.embed(doc.text);
     this.vectorStore.add(doc.id, vector, doc.metadata);
     this.documents.set(doc.id, doc.text);
-    this.documentTexts.set(doc.text, doc.id);
     await this.autoPersist();
   }
 
@@ -149,15 +148,15 @@ export class SemanticSearch<T = unknown> {
   async addDocuments(docs: Document<T>[]): Promise<void> {
     let filteredDocs = docs;
     if (this.config.deduplication) {
-      const batchSeenTexts = new Set<string>();
+      const seenTexts = new Set<string>(this.documents.values());
       filteredDocs = docs.filter((doc) => {
-        if (this.documentTexts.has(doc.text) || batchSeenTexts.has(doc.text)) {
+        if (seenTexts.has(doc.text)) {
           console.warn(
             `[SemanticSearch] Duplicate content detected in batch: "${doc.id}". Skipping.`
           );
           return false;
         }
-        batchSeenTexts.add(doc.text);
+        seenTexts.add(doc.text);
         return true;
       });
     }
@@ -171,7 +170,6 @@ export class SemanticSearch<T = unknown> {
       if (!doc || !vector) continue;
       this.vectorStore.add(doc.id, vector, doc.metadata);
       this.documents.set(doc.id, doc.text);
-      this.documentTexts.set(doc.text, doc.id);
     }
 
     await this.autoPersist();
@@ -195,10 +193,6 @@ export class SemanticSearch<T = unknown> {
   }
 
   async remove(id: string): Promise<boolean> {
-    const text = this.documents.get(id);
-    if (text !== undefined && this.documentTexts.get(text) === id) {
-      this.documentTexts.delete(text);
-    }
     this.documents.delete(id);
     const removed = this.vectorStore.remove(id);
     if (removed) {
@@ -210,7 +204,6 @@ export class SemanticSearch<T = unknown> {
   async clear(): Promise<void> {
     this.vectorStore.clear();
     this.documents.clear();
-    this.documentTexts.clear();
     await this.autoPersist();
   }
 
@@ -250,7 +243,6 @@ export class SemanticSearch<T = unknown> {
     for (const item of data) {
       this.vectorStore.add(item.id, item.vector, item.metadata);
       this.documents.set(item.id, item.text);
-      this.documentTexts.set(item.text, item.id);
     }
   }
 
