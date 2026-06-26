@@ -22,7 +22,7 @@ export async function createEmbedder<T extends ProviderType>(
       // Dynamic import avoids pulling in @aws-sdk/client-bedrock-runtime at module level.
       // The variable prevents TypeScript from statically resolving the specifier.
       const specifier = './bedrock/bedrock-provider.js';
-      const mod: any = await import(specifier);
+      const mod = (await import(specifier)) as typeof import('./bedrock/bedrock-provider.js');
       return new mod.BedrockProvider(config as BedrockProviderConfig) as EmbeddingProvider;
     }
     default:
