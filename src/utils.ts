@@ -47,16 +47,6 @@ export function chunkText(
   return chunks.length > 0 ? chunks : [text];
 }
 
-export function textSimilarity(a: string, b: string): number {
-  const wordsA = new Set(a.toLowerCase().split(/\s+/));
-  const wordsB = new Set(b.toLowerCase().split(/\s+/));
-
-  const intersection = new Set([...wordsA].filter(w => wordsB.has(w)));
-  const union = new Set([...wordsA, ...wordsB]);
-
-  return union.size === 0 ? 0 : intersection.size / union.size;
-}
-
 export function normalizeText(text: string): string {
   return text.toLowerCase().trim().replace(/\s+/g, ' ');
 }

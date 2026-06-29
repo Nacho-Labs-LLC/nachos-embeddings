@@ -39,7 +39,7 @@ export {
   type SearchResult,
 } from './vector-store.js';
 
-export { chunkText, estimateTokens, textSimilarity, normalizeText } from './utils.js';
+export { chunkText, estimateTokens, normalizeText } from './utils.js';
 
 // Provider system
 export type { EmbeddingProvider, BaseProviderConfig } from './providers/types.js';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTokens, chunkText, textSimilarity, normalizeText } from '../src/utils.js';
+import { estimateTokens, chunkText, normalizeText } from '../src/utils.js';
 
 describe('utils', () => {
   describe('estimateTokens', () => {
@@ -67,32 +67,6 @@ describe('utils', () => {
 
       const chunks = chunkText(text, { maxTokens: 5, overlapTokens: 5 });
       expect(chunks.length).toBeGreaterThan(1);
-    });
-  });
-
-  describe('textSimilarity', () => {
-    it('should return 1 for identical text', () => {
-      expect(textSimilarity('hello world', 'hello world')).toBe(1);
-    });
-
-    it('should return 0 for completely different text', () => {
-      expect(textSimilarity('hello world', 'goodbye everyone')).toBe(0);
-    });
-
-    it('should return correct Jaccard similarity', () => {
-      expect(textSimilarity('hello world', 'world peace')).toBe(1 / 3);
-    });
-
-    it('should be case-insensitive', () => {
-      expect(textSimilarity('HELLO world', 'hello WORLD')).toBe(1);
-    });
-
-    it('should handle empty strings', () => {
-      expect(textSimilarity('', '')).toBe(1); // Intersection of empty string split is {""} / {""} = 1
-    });
-
-    it('should handle multiple spaces', () => {
-      expect(textSimilarity('hello   world', 'hello world')).toBe(1);
     });
   });
 
