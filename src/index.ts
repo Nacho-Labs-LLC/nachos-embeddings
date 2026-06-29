@@ -44,4 +44,3 @@ export { chunkText, estimateTokens, textSimilarity, normalizeText } from './util
 // Provider system
 export type { EmbeddingProvider, BaseProviderConfig } from './providers/types.js';
 export { TransformersProvider, type TransformersProviderConfig } from './providers/transformers-provider.js';
-export { createEmbedder, type ProviderType, type ProviderConfigMap } from './providers/factory.js';

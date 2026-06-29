@@ -324,23 +324,6 @@ const provider = new BedrockProvider({
 });
 ```
 
-### Using the factory
-
-```typescript
-import { createEmbedder } from '@nacho-labs/nachos-embeddings';
-
-// Local (default)
-const local = await createEmbedder('transformers');
-await local.init();
-
-// Bedrock
-const bedrock = await createEmbedder('bedrock', {
-  region: 'us-east-1',
-  modelId: 'amazon.titan-embed-text-v2:0',
-});
-await bedrock.init();
-```
-
 ### Switching providers
 
 When switching between providers, note that **different models produce different vector dimensions** (e.g., Transformers.js default = 384d, Titan V2 = 1024d). Existing persisted vectors are incompatible with a different dimension — you must re-index your documents after switching.
