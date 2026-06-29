@@ -79,7 +79,8 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
       }
     } catch (err) {
       if (this.enhancedConfig.verbose) {
-        console.warn(`[EnhancedSemanticSearch] Failed to load from ${this.enhancedConfig.storePath}:`, err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.warn(`[EnhancedSemanticSearch] Failed to load from ${this.enhancedConfig.storePath}: ${errorMessage}`);
       }
     }
   }
@@ -103,7 +104,8 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
           console.log(`[EnhancedSemanticSearch] Saved ${data.length} documents to ${this.enhancedConfig.storePath}`);
         }
       } catch (err) {
-        console.error('[EnhancedSemanticSearch] Save failed:', err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error(`[EnhancedSemanticSearch] Save failed: ${errorMessage}`);
       }
     });
 
