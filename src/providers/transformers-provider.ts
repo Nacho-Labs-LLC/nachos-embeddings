@@ -2,8 +2,12 @@
  * Embedding provider using Transformers.js (local, no API needed)
  */
 
-import { pipeline, env, FeatureExtractionPipeline } from '@huggingface/transformers';
-import type { EmbeddingProvider, BaseProviderConfig } from './types.js';
+import {
+  pipeline,
+  env,
+  FeatureExtractionPipeline,
+} from "@huggingface/transformers";
+import type { EmbeddingProvider, BaseProviderConfig } from "./types.js";
 
 export interface TransformersProviderConfig extends BaseProviderConfig {
   /**
@@ -20,7 +24,7 @@ export interface TransformersProviderConfig extends BaseProviderConfig {
 }
 
 export class TransformersProvider implements EmbeddingProvider {
-  readonly name = 'transformers';
+  readonly name = "transformers";
 
   private pipeline: FeatureExtractionPipeline | null = null;
   private config: Required<TransformersProviderConfig>;
@@ -28,8 +32,8 @@ export class TransformersProvider implements EmbeddingProvider {
 
   constructor(config: TransformersProviderConfig = {}) {
     this.config = {
-      model: config.model ?? 'Xenova/all-MiniLM-L6-v2',
-      cacheDir: config.cacheDir ?? '.cache/transformers',
+      model: config.model ?? "Xenova/all-MiniLM-L6-v2",
+      cacheDir: config.cacheDir ?? ".cache/transformers",
       progressLogging: config.progressLogging ?? false,
     };
 
@@ -47,21 +51,21 @@ export class TransformersProvider implements EmbeddingProvider {
       console.log(`[TransformersProvider] Cache dir: ${this.config.cacheDir}`);
     }
 
-    this.pipeline = await pipeline('feature-extraction', this.config.model);
+    this.pipeline = await pipeline("feature-extraction", this.config.model);
     this.initialized = true;
 
     if (this.config.progressLogging) {
-      console.log('[TransformersProvider] Model loaded successfully');
+      console.log("[TransformersProvider] Model loaded successfully");
     }
   }
 
   async embed(text: string): Promise<number[]> {
     if (!this.initialized || !this.pipeline) {
-      throw new Error('Embedder not initialized. Call init() first.');
+      throw new Error("Embedder not initialized. Call init() first.");
     }
 
     const output = await this.pipeline(text, {
-      pooling: 'mean',
+      pooling: "mean",
       normalize: true,
     });
 
@@ -70,7 +74,7 @@ export class TransformersProvider implements EmbeddingProvider {
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (!this.initialized || !this.pipeline) {
-      throw new Error('Embedder not initialized. Call init() first.');
+      throw new Error("Embedder not initialized. Call init() first.");
     }
 
     const embeddings: number[][] = [];
@@ -79,11 +83,16 @@ export class TransformersProvider implements EmbeddingProvider {
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
       const batch = texts.slice(i, i + BATCH_SIZE);
 
-      for (const text of batch) {
-        const output = await this.pipeline(text, {
-          pooling: 'mean',
-          normalize: true,
-        });
+      const batchResults = await Promise.all(
+        batch.map((text) =>
+          this.pipeline!(text, {
+            pooling: "mean",
+            normalize: true,
+          }),
+        ),
+      );
+
+      for (const output of batchResults) {
         embeddings.push(Array.from(output.data));
       }
     }
@@ -96,7 +105,7 @@ export class TransformersProvider implements EmbeddingProvider {
       return null;
     }
 
-    const testVector = await this.embed('test');
+    const testVector = await this.embed("test");
     return testVector.length;
   }
 
