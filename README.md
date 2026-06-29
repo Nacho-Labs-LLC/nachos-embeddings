@@ -30,26 +30,26 @@ npm install @nacho-labs/nachos-embeddings
 ### Semantic search
 
 ```typescript
-import { SemanticSearch } from '@nacho-labs/nachos-embeddings';
+import { SemanticSearch } from "@nacho-labs/nachos-embeddings";
 
 const search = new SemanticSearch();
 await search.init(); // Downloads model on first run (~25MB)
 
 // Add documents
 await search.addDocument({
-  id: 'pref-1',
-  text: 'User loves breakfast tacos',
-  metadata: { kind: 'preference' },
+  id: "pref-1",
+  text: "User loves breakfast tacos",
+  metadata: { kind: "preference" },
 });
 
 await search.addDocument({
-  id: 'pref-2',
-  text: 'User dislikes mushrooms',
-  metadata: { kind: 'preference' },
+  id: "pref-2",
+  text: "User dislikes mushrooms",
+  metadata: { kind: "preference" },
 });
 
 // Semantic search — finds results even with different wording
-const results = await search.search('What does user like for morning meals?');
+const results = await search.search("What does user like for morning meals?");
 // [{ id: 'pref-1', similarity: 0.87, text: 'User loves breakfast tacos', metadata: { kind: 'preference' } }]
 ```
 
@@ -58,22 +58,22 @@ const results = await search.search('What does user like for morning meals?');
 For more control, use `Embedder` and `VectorStore` directly:
 
 ```typescript
-import { Embedder, VectorStore } from '@nacho-labs/nachos-embeddings';
+import { Embedder, VectorStore } from "@nacho-labs/nachos-embeddings";
 
 const embedder = new Embedder();
 await embedder.init();
 
 // Generate embeddings
-const vec1 = await embedder.embed('Hello world');
-const vec2 = await embedder.embed('Hi there');
+const vec1 = await embedder.embed("Hello world");
+const vec2 = await embedder.embed("Hi there");
 console.log(vec1.length); // 384 (vector dimensions)
 
 // Store and search vectors
 const store = new VectorStore();
-store.add('doc1', vec1, { content: 'Hello world' });
-store.add('doc2', vec2, { content: 'Hi there' });
+store.add("doc1", vec1, { content: "Hello world" });
+store.add("doc2", vec2, { content: "Hi there" });
 
-const queryVec = await embedder.embed('Greetings');
+const queryVec = await embedder.embed("Greetings");
 const results = store.search(queryVec, { limit: 5 });
 // [{ id: 'doc2', similarity: 0.92, metadata: { content: 'Hi there' } }, ...]
 ```
@@ -84,9 +84,9 @@ const results = store.search(queryVec, { limit: 5 });
 
 ```typescript
 const search = new SemanticSearch({
-  model: 'Xenova/all-MiniLM-L6-v2',     // Default — fast, 384 dimensions
+  model: "Xenova/all-MiniLM-L6-v2", // Default — fast, 384 dimensions
   // model: 'Xenova/all-mpnet-base-v2',  // Higher quality, slower
-  cacheDir: '.cache/transformers',
+  cacheDir: ".cache/transformers",
   progressLogging: true,
 });
 ```
@@ -98,21 +98,21 @@ Automatically save the index to disk after every write operation:
 ```typescript
 const search = new SemanticSearch({
   autoSave: true,
-  storePath: '.semantic-store.json',
+  storePath: ".semantic-store.json",
 });
 
 await search.init();
 
 // Index automatically persists after every add/remove
-await search.addDocument({ id: '1', text: 'foo' }); // Saves to disk
-await search.remove('1');                            // Saves to disk
+await search.addDocument({ id: "1", text: "foo" }); // Saves to disk
+await search.remove("1"); // Saves to disk
 
 // On startup, load the saved index:
-import { readFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { readFile } from "fs/promises";
+import { existsSync } from "fs";
 
-if (existsSync('.semantic-store.json')) {
-  const data = JSON.parse(await readFile('.semantic-store.json', 'utf-8'));
+if (existsSync(".semantic-store.json")) {
+  const data = JSON.parse(await readFile(".semantic-store.json", "utf-8"));
   search.import(data);
 }
 ```
@@ -121,7 +121,7 @@ if (existsSync('.semantic-store.json')) {
 
 ```typescript
 const search = new SemanticSearch({
-  storePath: '.semantic-store.json',
+  storePath: ".semantic-store.json",
   // autoSave: false (default)
 });
 
@@ -140,8 +140,8 @@ const search = new SemanticSearch({
   deduplication: true, // Default: true
 });
 
-await search.addDocument({ id: '1', text: 'foo' });
-await search.addDocument({ id: '2', text: 'foo' }); // ⚠️  Warns and skips
+await search.addDocument({ id: "1", text: "foo" });
+await search.addDocument({ id: "2", text: "foo" }); // ⚠️  Warns and skips
 
 // Check console:
 // [SemanticSearch] Duplicate content detected: "2" matches "1". Skipping.
@@ -163,7 +163,7 @@ const search = new SemanticSearch({
 });
 
 // Or override per search
-const results = await search.search('query', {
+const results = await search.search("query", {
   minSimilarity: 0.8,
   limit: 10,
 });
@@ -174,16 +174,16 @@ const results = await search.search('query', {
 Filter search results by metadata fields:
 
 ```typescript
-const results = await search.search('query', {
-  filter: (metadata) => metadata?.kind === 'preference',
+const results = await search.search("query", {
+  filter: (metadata) => metadata?.kind === "preference",
 });
 
 // Combine multiple filters
-const results = await search.search('auth patterns', {
-  filter: (meta) => 
-    meta?.kind === 'decision' && 
-    meta?.date > '2026-01-01' &&
-    meta?.tags?.includes('security'),
+const results = await search.search("auth patterns", {
+  filter: (meta) =>
+    meta?.kind === "decision" &&
+    meta?.date > "2026-01-01" &&
+    meta?.tags?.includes("security"),
 });
 ```
 
@@ -204,47 +204,47 @@ npm install @aws-sdk/client-bedrock-runtime
 **Quick start:**
 
 ```typescript
-import { SemanticSearch } from '@nacho-labs/nachos-embeddings';
-import { BedrockProvider } from '@nacho-labs/nachos-embeddings/bedrock';
+import { SemanticSearch } from "@nacho-labs/nachos-embeddings";
+import { BedrockProvider } from "@nacho-labs/nachos-embeddings/bedrock";
 
 const search = new SemanticSearch({
   provider: new BedrockProvider({
-    region: 'us-east-1',
-    modelId: 'amazon.titan-embed-text-v2:0',
+    region: "us-east-1",
+    modelId: "amazon.titan-embed-text-v2:0",
   }),
 });
 
 await search.init();
-await search.addDocument({ id: 'doc1', text: 'Hello world' });
-const results = await search.search('greetings');
+await search.addDocument({ id: "doc1", text: "Hello world" });
+const results = await search.search("greetings");
 ```
 
 **Supported models:**
 
-| Model ID | Dimensions | Notes |
-| ---------- | ----------- | ------- |
+| Model ID                       | Dimensions        | Notes                             |
+| ------------------------------ | ----------------- | --------------------------------- |
 | `amazon.titan-embed-text-v2:0` | 256, 512, or 1024 | Default. Configurable dimensions. |
-| `cohere.embed-english-v3` | 1024 | English-optimized |
-| `cohere.embed-multilingual-v3` | 1024 | 100+ languages |
+| `cohere.embed-english-v3`      | 1024              | English-optimized                 |
+| `cohere.embed-multilingual-v3` | 1024              | 100+ languages                    |
 
 **Model options:**
 
 ```typescript
 // Titan V2 — configurable dimensions and normalization
 new BedrockProvider({
-  modelId: 'amazon.titan-embed-text-v2:0',
+  modelId: "amazon.titan-embed-text-v2:0",
   modelOptions: {
-    dimensions: 256,    // 256, 512, or 1024 (default: 1024)
-    normalize: true,    // default: true
+    dimensions: 256, // 256, 512, or 1024 (default: 1024)
+    normalize: true, // default: true
   },
 });
 
 // Cohere — configurable input type for search optimization
 new BedrockProvider({
-  modelId: 'cohere.embed-english-v3',
+  modelId: "cohere.embed-english-v3",
   modelOptions: {
-    inputType: 'search_document',  // 'search_document' | 'search_query' | 'classification' | 'clustering'
-    truncate: 'END',               // 'NONE' | 'START' | 'END'
+    inputType: "search_document", // 'search_document' | 'search_query' | 'classification' | 'clustering'
+    truncate: "END", // 'NONE' | 'START' | 'END'
   },
 });
 ```
@@ -253,30 +253,30 @@ new BedrockProvider({
 
 ```typescript
 // Default — uses AWS SDK credential chain (env vars, ~/.aws/credentials, instance profile)
-new BedrockProvider({ credentials: { strategy: 'default' } });
+new BedrockProvider({ credentials: { strategy: "default" } });
 
 // Named profile
 new BedrockProvider({
-  credentials: { strategy: 'profile', profile: 'my-profile' },
+  credentials: { strategy: "profile", profile: "my-profile" },
 });
 
 // Explicit keys
 new BedrockProvider({
   credentials: {
-    strategy: 'explicit',
-    accessKeyId: 'AKID...',
-    secretAccessKey: 'SECRET...',
-    sessionToken: 'TOKEN...', // optional
+    strategy: "explicit",
+    accessKeyId: "AKID...",
+    secretAccessKey: "SECRET...",
+    sessionToken: "TOKEN...", // optional
   },
 });
 
 // Assume IAM role
 new BedrockProvider({
   credentials: {
-    strategy: 'role',
-    roleArn: 'arn:aws:iam::123456789:role/bedrock-access',
-    roleSessionName: 'nachos',  // optional
-    externalId: 'ext-id',       // optional
+    strategy: "role",
+    roleArn: "arn:aws:iam::123456789:role/bedrock-access",
+    roleSessionName: "nachos", // optional
+    externalId: "ext-id", // optional
   },
 });
 ```
@@ -285,15 +285,15 @@ new BedrockProvider({
 
 ```typescript
 new BedrockProvider({
-  region: 'us-west-2',
-  modelId: 'amazon.titan-embed-text-v2:0',
-  endpoint: 'https://vpce-xxx.bedrock-runtime.us-west-2.vpce.amazonaws.com', // VPC endpoint
-  batchSize: 25,        // texts per batch chunk (default: 25)
-  maxConcurrency: 5,    // parallel API calls within a batch (default: 5)
-  timeout: 30000,       // request timeout in ms (default: 30000)
+  region: "us-west-2",
+  modelId: "amazon.titan-embed-text-v2:0",
+  endpoint: "https://vpce-xxx.bedrock-runtime.us-west-2.vpce.amazonaws.com", // VPC endpoint
+  batchSize: 25, // texts per batch chunk (default: 25)
+  maxConcurrency: 5, // parallel API calls within a batch (default: 5)
+  timeout: 30000, // request timeout in ms (default: 30000)
   retry: {
-    maxAttempts: 3,      // retry count for transient errors (default: 3)
-    backoffMs: 200,      // base backoff, doubles per retry (default: 200)
+    maxAttempts: 3, // retry count for transient errors (default: 3)
+    backoffMs: 200, // base backoff, doubles per retry (default: 200)
   },
   progressLogging: true, // log init/dimension detection
 });
@@ -304,11 +304,11 @@ new BedrockProvider({
 For Bedrock models not built-in, implement `BedrockModelAdapter`:
 
 ```typescript
-import { BedrockProvider } from '@nacho-labs/nachos-embeddings/bedrock';
-import type { BedrockModelAdapter } from '@nacho-labs/nachos-embeddings/bedrock';
+import { BedrockProvider } from "@nacho-labs/nachos-embeddings/bedrock";
+import type { BedrockModelAdapter } from "@nacho-labs/nachos-embeddings/bedrock";
 
 const myAdapter: BedrockModelAdapter = {
-  modelName: 'My Custom Model',
+  modelName: "My Custom Model",
   defaultDimension: 768,
   formatRequest(text, options) {
     return JSON.stringify({ input: text, ...options });
@@ -319,7 +319,7 @@ const myAdapter: BedrockModelAdapter = {
 };
 
 const provider = new BedrockProvider({
-  modelId: 'my-company.custom-embed-v1',
+  modelId: "my-company.custom-embed-v1",
   modelAdapter: myAdapter,
 });
 ```
@@ -327,16 +327,16 @@ const provider = new BedrockProvider({
 ### Using the factory
 
 ```typescript
-import { createEmbedder } from '@nacho-labs/nachos-embeddings';
+import { createEmbedder } from "@nacho-labs/nachos-embeddings";
 
 // Local (default)
-const local = await createEmbedder('transformers');
+const local = await createEmbedder("transformers");
 await local.init();
 
 // Bedrock
-const bedrock = await createEmbedder('bedrock', {
-  region: 'us-east-1',
-  modelId: 'amazon.titan-embed-text-v2:0',
+const bedrock = await createEmbedder("bedrock", {
+  region: "us-east-1",
+  modelId: "amazon.titan-embed-text-v2:0",
 });
 await bedrock.init();
 ```
@@ -350,14 +350,14 @@ When switching between providers, note that **different models produce different
 Export and import for saving to disk:
 
 ```typescript
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from "node:fs/promises";
 
 // Export
 const data = search.export();
-await writeFile('embeddings.json', JSON.stringify(data));
+await writeFile("embeddings.json", JSON.stringify(data));
 
 // Import
-const saved = JSON.parse(await readFile('embeddings.json', 'utf-8'));
+const saved = JSON.parse(await readFile("embeddings.json", "utf-8"));
 search.import(saved);
 ```
 
@@ -368,8 +368,8 @@ context that persists across sessions and gets recalled by meaning, not keywords
 
 ### Why this matters
 
-Claude Code can read files, but it doesn't *remember* what you discussed
-yesterday or *know* which files are most relevant to your current question.
+Claude Code can read files, but it doesn't _remember_ what you discussed
+yesterday or _know_ which files are most relevant to your current question.
 nachos-embeddings adds a local semantic search layer through
 [MCP](https://modelcontextprotocol.io) (Model Context Protocol):
 
@@ -390,13 +390,16 @@ npm install @nacho-labs/nachos-embeddings @modelcontextprotocol/sdk zod tsx
 Create `server.ts`:
 
 ```typescript
-import { McpServer, StdioServerTransport } from '@modelcontextprotocol/sdk/server/index.js';
-import { z } from 'zod';
-import { SemanticSearch } from '@nacho-labs/nachos-embeddings';
-import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import {
+  McpServer,
+  StdioServerTransport,
+} from "@modelcontextprotocol/sdk/server/index.js";
+import { z } from "zod";
+import { SemanticSearch } from "@nacho-labs/nachos-embeddings";
+import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
-const STORE_PATH = '.semantic-store.json';
+const STORE_PATH = ".semantic-store.json";
 
 // Initialize search engine
 const search = new SemanticSearch({ minSimilarity: 0.6 });
@@ -404,13 +407,16 @@ const search = new SemanticSearch({ minSimilarity: 0.6 });
 try {
   await search.init();
 } catch (err) {
-  console.error('Failed to load embedding model. Is this the first run? An internet connection is required to download the model (~25MB).', err);
+  console.error(
+    "Failed to load embedding model. Is this the first run? An internet connection is required to download the model (~25MB).",
+    err,
+  );
   process.exit(1);
 }
 
 // Load persisted index if it exists
 if (existsSync(STORE_PATH)) {
-  const data = JSON.parse(await readFile(STORE_PATH, 'utf-8'));
+  const data = JSON.parse(await readFile(STORE_PATH, "utf-8"));
   search.import(data);
 }
 
@@ -420,82 +426,105 @@ async function persist() {
 
 // Create MCP server
 const server = new McpServer(
-  { name: 'semantic-search', version: '1.0.0' },
-  { capabilities: { logging: {} } }
+  { name: "semantic-search", version: "1.0.0" },
+  { capabilities: { logging: {} } },
 );
 
 // Tool: Search for semantically similar content
 server.registerTool(
-  'semantic_search',
+  "semantic_search",
   {
-    title: 'Semantic Search',
-    description: 'Search indexed documents by meaning. Use this to find relevant context, past decisions, code patterns, or any previously indexed content.',
+    title: "Semantic Search",
+    description:
+      "Search indexed documents by meaning. Use this to find relevant context, past decisions, code patterns, or any previously indexed content.",
     inputSchema: z.object({
-      query: z.string().describe('Natural language search query'),
-      limit: z.number().optional().default(5).describe('Max results to return'),
+      query: z.string().describe("Natural language search query"),
+      limit: z.number().optional().default(5).describe("Max results to return"),
     }),
   },
   async ({ query, limit }) => {
     const results = await search.search(query, { limit });
     if (results.length === 0) {
-      return { content: [{ type: 'text', text: 'No relevant results found.' }] };
+      return {
+        content: [{ type: "text", text: "No relevant results found." }],
+      };
     }
-    const formatted = results.map((r, i) =>
-      `${i + 1}. [${(r.similarity * 100).toFixed(0)}%] ${r.text}${r.metadata ? `\n   metadata: ${JSON.stringify(r.metadata)}` : ''}`
-    ).join('\n\n');
-    return { content: [{ type: 'text', text: formatted }] };
-  }
+    const formatted = results
+      .map(
+        (r, i) =>
+          `${i + 1}. [${(r.similarity * 100).toFixed(0)}%] ${r.text}${r.metadata ? `\n   metadata: ${JSON.stringify(r.metadata)}` : ""}`,
+      )
+      .join("\n\n");
+    return { content: [{ type: "text", text: formatted }] };
+  },
 );
 
 // Tool: Add a document to the index
 server.registerTool(
-  'semantic_index',
+  "semantic_index",
   {
-    title: 'Index Document',
-    description: 'Add a document to the semantic search index. Use this to remember decisions, patterns, file summaries, or any context worth recalling later.',
+    title: "Index Document",
+    description:
+      "Add a document to the semantic search index. Use this to remember decisions, patterns, file summaries, or any context worth recalling later.",
     inputSchema: z.object({
-      id: z.string().describe('Unique document ID'),
-      text: z.string().describe('The text content to index'),
-      metadata: z.record(z.string()).optional().describe('Optional key-value metadata'),
+      id: z.string().describe("Unique document ID"),
+      text: z.string().describe("The text content to index"),
+      metadata: z
+        .record(z.string())
+        .optional()
+        .describe("Optional key-value metadata"),
     }),
   },
   async ({ id, text, metadata }) => {
     await search.addDocument({ id, text, metadata });
     await persist();
-    return { content: [{ type: 'text', text: `Indexed "${id}" (${search.size()} total documents)` }] };
-  }
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Indexed "${id}" (${search.size()} total documents)`,
+        },
+      ],
+    };
+  },
 );
 
 // Tool: Remove a document
 server.registerTool(
-  'semantic_remove',
+  "semantic_remove",
   {
-    title: 'Remove Document',
-    description: 'Remove a document from the semantic search index by ID.',
+    title: "Remove Document",
+    description: "Remove a document from the semantic search index by ID.",
     inputSchema: z.object({
-      id: z.string().describe('Document ID to remove'),
+      id: z.string().describe("Document ID to remove"),
     }),
   },
   async ({ id }) => {
     const removed = search.remove(id);
     if (removed) await persist();
     return {
-      content: [{ type: 'text', text: removed ? `Removed "${id}"` : `"${id}" not found` }],
+      content: [
+        {
+          type: "text",
+          text: removed ? `Removed "${id}"` : `"${id}" not found`,
+        },
+      ],
     };
-  }
+  },
 );
 
 // Tool: Get index stats
 server.registerTool(
-  'semantic_stats',
+  "semantic_stats",
   {
-    title: 'Index Stats',
-    description: 'Get the number of documents currently in the semantic search index.',
+    title: "Index Stats",
+    description:
+      "Get the number of documents currently in the semantic search index.",
     inputSchema: z.object({}),
   },
   async () => ({
-    content: [{ type: 'text', text: `${search.size()} documents indexed` }],
-  })
+    content: [{ type: "text", text: `${search.size()} documents indexed` }],
+  }),
 );
 
 // Start
@@ -527,12 +556,12 @@ Or add to your project's `.mcp.json`:
 
 Once registered, Claude Code gains four new tools:
 
-| Tool | What it does |
-| ------ | ------------- |
+| Tool              | What it does                     |
+| ----------------- | -------------------------------- |
 | `semantic_search` | Find relevant content by meaning |
-| `semantic_index` | Add content to the index |
-| `semantic_remove` | Remove content by ID |
-| `semantic_stats` | Check index size |
+| `semantic_index`  | Add content to the index         |
+| `semantic_remove` | Remove content by ID             |
+| `semantic_stats`  | Check index size                 |
 
 Claude Code will use these automatically when relevant. You can also prompt it:
 
@@ -575,10 +604,10 @@ Returns: "We throttle API requests using sliding windows..."
 
 The model understands meaning, not just keywords:
 
-| Query | Finds |
-| ------- | ------- |
-| "rate limiting" | "We throttle API requests using sliding windows" |
-| "how to deploy" | "Production runs via docker compose up with..." |
+| Query                    | Finds                                             |
+| ------------------------ | ------------------------------------------------- |
+| "rate limiting"          | "We throttle API requests using sliding windows"  |
+| "how to deploy"          | "Production runs via docker compose up with..."   |
 | "error handling pattern" | "We use Result types instead of try/catch for..." |
 
 ## Use cases
@@ -591,15 +620,16 @@ The model understands meaning, not just keywords:
 
 ## Performance
 
-| Operation | Time (approx) |
-|-----------|---------------|
-| Model init (first time) | ~2-5 seconds |
-| Model init (cached) | ~500ms |
-| Embed single text | ~10-50ms |
-| Embed batch (100 texts) | ~500ms-2s |
-| Search 1000 vectors | ~5-10ms |
+| Operation               | Time (approx) |
+| ----------------------- | ------------- |
+| Model init (first time) | ~2-5 seconds  |
+| Model init (cached)     | ~500ms        |
+| Embed single text       | ~10-50ms      |
+| Embed batch (100 texts) | ~500ms-2s     |
+| Search 1000 vectors     | ~5-10ms       |
 
 **Memory:**
+
 - Model: ~100MB (loaded once, reused)
 - Each vector: ~1.5KB (384 floats)
 - 1000 documents: ~1.5MB vectors + original text
@@ -610,13 +640,13 @@ dedicated vector database like [Qdrant](https://qdrant.tech) or
 
 ## Comparison
 
-| Feature | Local (default) | Bedrock | OpenAI |
-| ------- | --------------- | ------- | ------ |
-| Cost | Free | ~$0.0001/1k tokens | ~$0.0001/1k chars |
-| Setup | `npm install` | + AWS credentials | API key |
-| Privacy | 100% local | AWS account | Cloud |
-| Offline | Yes | No | No |
-| Quality | Good (MiniLM) | Excellent (Titan V2, Cohere) | Excellent |
+| Feature | Local (default) | Bedrock                      | OpenAI            |
+| ------- | --------------- | ---------------------------- | ----------------- |
+| Cost    | Free            | ~$0.0001/1k tokens           | ~$0.0001/1k chars |
+| Setup   | `npm install`   | + AWS credentials            | API key           |
+| Privacy | 100% local      | AWS account                  | Cloud             |
+| Offline | Yes             | No                           | No                |
+| Quality | Good (MiniLM)   | Excellent (Titan V2, Cohere) | Excellent         |
 
 ## API reference
 
@@ -624,78 +654,80 @@ dedicated vector database like [Qdrant](https://qdrant.tech) or
 
 High-level API combining embedder and vector store.
 
-| Method | Description |
-| -------- | ------------- |
+| Method                        | Description                                                                                  |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
 | `new SemanticSearch(config?)` | Create instance. Config: `provider`, `model`, `minSimilarity`, `cacheDir`, `progressLogging` |
-| `init()` | Load the embedding model. **Must be called before any other method.** |
-| `addDocument(doc)` | Add `{ id, text, metadata? }` to the index |
-| `addDocuments(docs)` | Batch add (more efficient for multiple documents) |
-| `search(query, opts?)` | Search by meaning. Options: `limit`, `minSimilarity`, `filter` |
-| `remove(id)` | Remove a document by ID |
-| `clear()` | Remove all documents |
-| `size()` | Get document count |
-| `export()` | Export all documents and vectors for persistence |
-| `import(data)` | Import previously exported data |
-| `isInitialized()` | Check if the model is loaded |
+| `init()`                      | Load the embedding model. **Must be called before any other method.**                        |
+| `addDocument(doc)`            | Add `{ id, text, metadata? }` to the index                                                   |
+| `addDocuments(docs)`          | Batch add (more efficient for multiple documents)                                            |
+| `search(query, opts?)`        | Search by meaning. Options: `limit`, `minSimilarity`, `filter`                               |
+| `remove(id)`                  | Remove a document by ID                                                                      |
+| `clear()`                     | Remove all documents                                                                         |
+| `size()`                      | Get document count                                                                           |
+| `export()`                    | Export all documents and vectors for persistence                                             |
+| `import(data)`                | Import previously exported data                                                              |
+| `isInitialized()`             | Check if the model is loaded                                                                 |
 
 ### Embedder
 
 Low-level text-to-vector conversion.
 
-| Method | Description |
-| -------- | ------------- |
+| Method                  | Description                                                     |
+| ----------------------- | --------------------------------------------------------------- |
 | `new Embedder(config?)` | Create instance. Config: `model`, `cacheDir`, `progressLogging` |
-| `init()` | Load the model |
-| `embed(text)` | Convert text to a 384-dimension vector |
-| `embedBatch(texts)` | Convert multiple texts (batched for efficiency) |
-| `getDimension()` | Get vector dimension (384 for default model) |
-| `isInitialized()` | Check if ready |
-| `getConfig()` | Get current configuration |
+| `init()`                | Load the model                                                  |
+| `embed(text)`           | Convert text to a 384-dimension vector                          |
+| `embedBatch(texts)`     | Convert multiple texts (batched for efficiency)                 |
+| `getDimension()`        | Get vector dimension (384 for default model)                    |
+| `isInitialized()`       | Check if ready                                                  |
+| `getConfig()`           | Get current configuration                                       |
 
 ### VectorStore
 
 In-memory vector storage and similarity search.
 
-| Method | Description |
-| -------- | ------------- |
-| `new VectorStore(config?)` | Create instance. Config: `minSimilarity`, `defaultLimit` |
-| `add(id, vector, metadata?)` | Store a vector |
-| `addBatch(entries)` | Store multiple vectors |
-| `search(queryVector, opts?)` | Find similar vectors. Options: `limit`, `minSimilarity`, `filter` |
-| `get(id)` | Retrieve a vector by ID |
-| `remove(id)` | Remove by ID |
-| `clear()` | Remove all |
-| `size()` | Get count |
-| `keys()` | Get all IDs |
-| `export()` / `import(entries)` | Persistence |
+| Method                         | Description                                                       |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `new VectorStore(config?)`     | Create instance. Config: `minSimilarity`, `defaultLimit`          |
+| `add(id, vector, metadata?)`   | Store a vector                                                    |
+| `addBatch(entries)`            | Store multiple vectors                                            |
+| `search(queryVector, opts?)`   | Find similar vectors. Options: `limit`, `minSimilarity`, `filter` |
+| `get(id)`                      | Retrieve a vector by ID                                           |
+| `remove(id)`                   | Remove by ID                                                      |
+| `clear()`                      | Remove all                                                        |
+| `size()`                       | Get count                                                         |
+| `keys()`                       | Get all IDs                                                       |
+| `export()` / `import(entries)` | Persistence                                                       |
 
 ### Utilities
 
-| Function | Description |
-| ---------- | ------------- |
-| `cosineSimilarity(a, b)` | Cosine similarity between two vectors (-1 to 1) |
-| `normalizeVector(v)` | Normalize to unit length |
+| Function                     | Description                                            |
+| ---------------------------- | ------------------------------------------------------ |
+| `cosineSimilarity(a, b)`     | Cosine similarity between two vectors (-1 to 1)        |
+| `normalizeVector(v)`         | Normalize to unit length                               |
 | `getGlobalEmbedder(config?)` | Shared singleton instance (avoids loading model twice) |
-| `resetGlobalEmbedder()` | Reset the singleton (useful for testing) |
+| `resetGlobalEmbedder()`      | Reset the singleton (useful for testing)               |
 
 ## Advanced
 
 ### Batch processing
 
 ```typescript
-const texts = ['Document 1', 'Document 2', /* ... */];
+const texts = ["Document 1", "Document 2" /* ... */];
 const embeddings = await embedder.embedBatch(texts);
-store.addBatch(texts.map((text, i) => ({
-  id: `doc-${i}`,
-  vector: embeddings[i],
-  metadata: { text },
-})));
+store.addBatch(
+  texts.map((text, i) => ({
+    id: `doc-${i}`,
+    vector: embeddings[i],
+    metadata: { text },
+  })),
+);
 ```
 
 ### Global singleton
 
 ```typescript
-import { getGlobalEmbedder } from '@nacho-labs/nachos-embeddings';
+import { getGlobalEmbedder } from "@nacho-labs/nachos-embeddings";
 
 const embedder = getGlobalEmbedder();
 await embedder.init(); // Only loads model once
@@ -704,7 +736,10 @@ await embedder.init(); // Only loads model once
 ### Vector utilities
 
 ```typescript
-import { cosineSimilarity, normalizeVector } from '@nacho-labs/nachos-embeddings';
+import {
+  cosineSimilarity,
+  normalizeVector,
+} from "@nacho-labs/nachos-embeddings";
 
 const similarity = cosineSimilarity([0.5, 0.3, 0.8], [0.6, 0.4, 0.7]);
 const normalized = normalizeVector([3, 4]); // Unit vector
@@ -740,11 +775,13 @@ const CHUNK = 100;
 for (let i = 0; i < texts.length; i += CHUNK) {
   const batch = texts.slice(i, i + CHUNK);
   const vecs = await embedder.embedBatch(batch);
-  store.addBatch(batch.map((text, j) => ({
-    id: `doc-${i + j}`,
-    vector: vecs[j],
-    metadata: { text },
-  })));
+  store.addBatch(
+    batch.map((text, j) => ({
+      id: `doc-${i + j}`,
+      vector: vecs[j],
+      metadata: { text },
+    })),
+  );
 }
 ```
 

@@ -4,8 +4,11 @@
  * This is a backward-compatible wrapper around TransformersProvider.
  */
 
-import type { EmbeddingProvider } from './providers/types.js';
-import { TransformersProvider, type TransformersProviderConfig } from './providers/transformers-provider.js';
+import type { EmbeddingProvider } from "./providers/types.js";
+import {
+  TransformersProvider,
+  type TransformersProviderConfig,
+} from "./providers/transformers-provider.js";
 
 export type EmbedderConfig = TransformersProviderConfig;
 
@@ -25,7 +28,7 @@ export type EmbedderConfig = TransformersProviderConfig;
  * ```
  */
 export class Embedder implements EmbeddingProvider {
-  readonly name = 'transformers';
+  readonly name = "transformers";
 
   private provider: TransformersProvider;
 
