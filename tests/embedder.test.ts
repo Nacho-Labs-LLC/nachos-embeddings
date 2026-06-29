@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { Embedder, getGlobalEmbedder, resetGlobalEmbedder } from '../src/embedder.js';
+import { describe, it, expect } from 'vitest';
+import { Embedder } from '../src/embedder.js';
 
 describe('Embedder', () => {
   it('is not initialized before init()', () => {
@@ -40,24 +40,5 @@ describe('Embedder', () => {
     expect(config.model).toBe('Xenova/all-mpnet-base-v2');
     expect(config.cacheDir).toBe('/tmp/models');
     expect(config.progressLogging).toBe(true);
-  });
-});
-
-describe('globalEmbedder', () => {
-  afterEach(() => {
-    resetGlobalEmbedder();
-  });
-
-  it('returns the same instance on repeated calls', () => {
-    const a = getGlobalEmbedder();
-    const b = getGlobalEmbedder();
-    expect(a).toBe(b);
-  });
-
-  it('creates a new instance after reset', () => {
-    const a = getGlobalEmbedder();
-    resetGlobalEmbedder();
-    const b = getGlobalEmbedder();
-    expect(a).not.toBe(b);
   });
 });

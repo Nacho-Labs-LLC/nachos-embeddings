@@ -61,18 +61,3 @@ export class Embedder implements EmbeddingProvider {
     return this.provider.getConfig();
   }
 }
-
-/** Singleton instance - avoids loading model multiple times */
-let globalEmbedder: Embedder | null = null;
-
-export function getGlobalEmbedder(config?: EmbedderConfig): Embedder {
-  if (!globalEmbedder) {
-    globalEmbedder = new Embedder(config);
-  }
-  return globalEmbedder;
-}
-
-/** For testing */
-export function resetGlobalEmbedder(): void {
-  globalEmbedder = null;
-}
