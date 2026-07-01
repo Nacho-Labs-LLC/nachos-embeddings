@@ -1,9 +1,13 @@
-import { SemanticSearch, type SemanticSearchOptions, type Document } from './semantic-search.js';
-import { type SearchResult } from './vector-store.js';
-import { chunkText, normalizeText, estimateTokens } from './utils.js';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
+import {
+  SemanticSearch,
+  type SemanticSearchOptions,
+  type Document,
+} from "./semantic-search.js";
+import { type SearchResult } from "./vector-store.js";
+import { chunkText, normalizeText, estimateTokens } from "./utils.js";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 
 export interface EnhancedSemanticSearchConfig extends SemanticSearchOptions {
   autoSave?: boolean;
@@ -24,22 +28,27 @@ interface DocumentMetadata {
   [key: string]: unknown;
 }
 
-export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadata> extends SemanticSearch<T> {
-  private enhancedConfig: Omit<Required<EnhancedSemanticSearchConfig>, 'provider'>;
+export class EnhancedSemanticSearch<
+  T extends DocumentMetadata = DocumentMetadata,
+> extends SemanticSearch<T> {
+  private enhancedConfig: Omit<
+    Required<EnhancedSemanticSearchConfig>,
+    "provider"
+  >;
   private saveQueue = Promise.resolve();
   private textHashes = new Map<string, string>();
 
   constructor(config: EnhancedSemanticSearchConfig = {}) {
     super(config);
-    
+
     this.enhancedConfig = {
       ...config,
-      model: config.model ?? 'Xenova/all-MiniLM-L6-v2',
+      model: config.model ?? "Xenova/all-MiniLM-L6-v2",
       minSimilarity: config.minSimilarity ?? 0.4,
-      cacheDir: config.cacheDir ?? '.cache/transformers',
+      cacheDir: config.cacheDir ?? ".cache/transformers",
       progressLogging: config.progressLogging ?? false,
       autoSave: config.autoSave ?? false,
-      storePath: config.storePath ?? '.semantic-store.json',
+      storePath: config.storePath ?? ".semantic-store.json",
       autoChunk: config.autoChunk ?? false,
       maxChunkTokens: config.maxChunkTokens ?? 500,
       chunkOverlap: config.chunkOverlap ?? 50,
@@ -57,12 +66,15 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
   }
 
   async load(): Promise<void> {
-    if (!this.enhancedConfig.storePath || !existsSync(this.enhancedConfig.storePath)) {
+    if (
+      !this.enhancedConfig.storePath ||
+      !existsSync(this.enhancedConfig.storePath)
+    ) {
       return;
     }
 
     try {
-      const raw = await readFile(this.enhancedConfig.storePath, 'utf-8');
+      const raw = await readFile(this.enhancedConfig.storePath, "utf-8");
       const data = JSON.parse(raw);
 
       if (Array.isArray(data)) {
@@ -74,12 +86,18 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
         }
 
         if (this.enhancedConfig.verbose) {
-          console.log(`[EnhancedSemanticSearch] Loaded ${data.length} documents from ${this.enhancedConfig.storePath}`);
+          console.log(
+            `[EnhancedSemanticSearch] Loaded ${data.length} documents from ${this.enhancedConfig.storePath}`,
+          );
         }
       }
     } catch (err) {
       if (this.enhancedConfig.verbose) {
-        console.warn(`[EnhancedSemanticSearch] Failed to load from ${this.enhancedConfig.storePath}:`, err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[EnhancedSemanticSearch] Failed to load from ${this.enhancedConfig.storePath}:`,
+          errorMessage,
+        );
       }
     }
   }
@@ -97,13 +115,19 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
         }
 
         const data = super.export();
-        await writeFile(this.enhancedConfig.storePath!, JSON.stringify(data, null, 2));
+        await writeFile(
+          this.enhancedConfig.storePath!,
+          JSON.stringify(data, null, 2),
+        );
 
         if (this.enhancedConfig.verbose) {
-          console.log(`[EnhancedSemanticSearch] Saved ${data.length} documents to ${this.enhancedConfig.storePath}`);
+          console.log(
+            `[EnhancedSemanticSearch] Saved ${data.length} documents to ${this.enhancedConfig.storePath}`,
+          );
         }
       } catch (err) {
-        console.error('[EnhancedSemanticSearch] Save failed:', err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error("[EnhancedSemanticSearch] Save failed:", errorMessage);
       }
     });
 
@@ -119,7 +143,9 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
     return this.textHashes.get(normalized) ?? null;
   }
 
-  private async checkFuzzyDuplicate(text: string): Promise<{ id: string; similarity: number } | null> {
+  private async checkFuzzyDuplicate(
+    text: string,
+  ): Promise<{ id: string; similarity: number } | null> {
     if (this.enhancedConfig.deduplicateSimilarity === 0) {
       return null;
     }
@@ -129,14 +155,18 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
       minSimilarity: this.enhancedConfig.deduplicateSimilarity,
     });
 
-    return results.length > 0 ? { id: results[0]!.id, similarity: results[0]!.similarity } : null;
+    return results.length > 0
+      ? { id: results[0]!.id, similarity: results[0]!.similarity }
+      : null;
   }
 
   override async addDocument(doc: Document<T>): Promise<void> {
     const exactDup = await this.checkExactDuplicate(doc.text);
     if (exactDup) {
       if (this.enhancedConfig.verbose) {
-        console.log(`[EnhancedSemanticSearch] Skipped exact duplicate: "${doc.id}" matches "${exactDup}"`);
+        console.log(
+          `[EnhancedSemanticSearch] Skipped exact duplicate: "${doc.id}" matches "${exactDup}"`,
+        );
       }
       return;
     }
@@ -145,7 +175,7 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
     if (fuzzyDup) {
       if (this.enhancedConfig.verbose) {
         console.log(
-          `[EnhancedSemanticSearch] Skipped fuzzy duplicate: "${doc.id}" ~= "${fuzzyDup.id}" (${(fuzzyDup.similarity * 100).toFixed(1)}%)`
+          `[EnhancedSemanticSearch] Skipped fuzzy duplicate: "${doc.id}" ~= "${fuzzyDup.id}" (${(fuzzyDup.similarity * 100).toFixed(1)}%)`,
         );
       }
       return;
@@ -157,11 +187,14 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
     }
 
     const tokenCount = estimateTokens(doc.text);
-    if (this.enhancedConfig.autoChunk && tokenCount > this.enhancedConfig.maxChunkTokens) {
+    if (
+      this.enhancedConfig.autoChunk &&
+      tokenCount > this.enhancedConfig.maxChunkTokens
+    ) {
       await this.addLongDocument({ ...doc, metadata });
     } else {
       await super.addDocument({ ...doc, metadata });
-      
+
       const normalized = normalizeText(doc.text);
       this.textHashes.set(normalized, doc.id);
     }
@@ -176,13 +209,15 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
     });
 
     if (this.enhancedConfig.verbose) {
-      console.log(`[EnhancedSemanticSearch] Chunking "${doc.id}" into ${chunks.length} parts`);
+      console.log(
+        `[EnhancedSemanticSearch] Chunking "${doc.id}" into ${chunks.length} parts`,
+      );
     }
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!;
       const chunkId = chunks.length === 1 ? doc.id : `${doc.id}#chunk${i}`;
-      
+
       const chunkMetadata = {
         ...doc.metadata,
         chunkIndex: i,
@@ -213,14 +248,15 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
       minSimilarity?: number;
       filter?: (metadata?: T) => boolean;
       temporalBoost?: boolean;
-    }
+    },
   ): Promise<Array<SearchResult<T> & { text: string }>> {
     let results = await super.search(query, options);
 
-    const shouldBoost = options?.temporalBoost ?? this.enhancedConfig.temporalBoost;
+    const shouldBoost =
+      options?.temporalBoost ?? this.enhancedConfig.temporalBoost;
     if (shouldBoost) {
       const now = Date.now();
-      
+
       results = results.map((r) => {
         const timestamp = r.metadata?.timestamp ?? now;
         const ageMs = now - timestamp;
@@ -269,7 +305,9 @@ export class EnhancedSemanticSearch<T extends DocumentMetadata = DocumentMetadat
     await this.save();
   }
 
-  getConfig(): Readonly<Omit<Required<EnhancedSemanticSearchConfig>, 'provider'>> {
+  getConfig(): Readonly<
+    Omit<Required<EnhancedSemanticSearchConfig>, "provider">
+  > {
     return { ...this.enhancedConfig };
   }
 }
