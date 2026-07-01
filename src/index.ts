@@ -28,7 +28,7 @@ export {
   type EnhancedSemanticSearchConfig,
 } from './semantic-search-enhanced.js';
 
-export { Embedder, getGlobalEmbedder, resetGlobalEmbedder, type EmbedderConfig } from './embedder.js';
+export { Embedder, type EmbedderConfig } from './embedder.js';
 
 export {
   VectorStore,

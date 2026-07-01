@@ -658,8 +658,6 @@ In-memory vector storage and similarity search.
 | ---------- | ------------- |
 | `cosineSimilarity(a, b)` | Cosine similarity between two vectors (-1 to 1) |
 | `normalizeVector(v)` | Normalize to unit length |
-| `getGlobalEmbedder(config?)` | Shared singleton instance (avoids loading model twice) |
-| `resetGlobalEmbedder()` | Reset the singleton (useful for testing) |
 
 ## Advanced
 
@@ -673,15 +671,6 @@ store.addBatch(texts.map((text, i) => ({
   vector: embeddings[i],
   metadata: { text },
 })));
-```
-
-### Global singleton
-
-```typescript
-import { getGlobalEmbedder } from '@nacho-labs/nachos-embeddings';
-
-const embedder = getGlobalEmbedder();
-await embedder.init(); // Only loads model once
 ```
 
 ### Vector utilities
