@@ -68,6 +68,32 @@ describe('utils', () => {
       const chunks = chunkText(text, { maxTokens: 5, overlapTokens: 5 });
       expect(chunks.length).toBeGreaterThan(1);
     });
+
+    it('should handle a single sentence larger than maxTokens', () => {
+      // 500 chars -> 125 tokens. If maxTokens is 10, it exceeds it.
+      const sentence = 'a'.repeat(500) + '.';
+      const chunks = chunkText(sentence, { maxTokens: 10, overlapTokens: 0 });
+      // Should return a single chunk because it can't split a sentence.
+      expect(chunks).toEqual([sentence]);
+    });
+
+    it('should handle exact max tokens correctly', () => {
+      // 40 chars -> 10 tokens.
+      const sentence = 'a'.repeat(40) + '.';
+      const chunks = chunkText(sentence, { maxTokens: 10, overlapTokens: 0 });
+      expect(chunks).toEqual([sentence]);
+    });
+
+    it('should handle overlapTokens >= maxTokens', () => {
+      const text = 'a. b. c. d. e.';
+      const chunks = chunkText(text, { maxTokens: 2, overlapTokens: 3 });
+      // Overlap > maxTokens causes it to keep all sentences.
+      // E.g., ['a. b.', 'a. b. c.', 'a. b. c. d.', 'a. b. c. d. e.']
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks[0]).toBe('a. b.');
+      expect(chunks[1]).toBe('a. b. c.');
+      expect(chunks[chunks.length - 1]).toBe(text);
+    });
   });
 
   describe('textSimilarity', () => {
