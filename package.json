@@ -73,7 +73,7 @@
     "url": "git+https://github.com/nacho-labs-llc/nachos-embeddings.git"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.8.0"
+    "@huggingface/transformers": "^4.2.0"
   },
   "peerDependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.0.0",
