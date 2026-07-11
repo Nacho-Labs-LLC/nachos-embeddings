@@ -66,6 +66,12 @@ export interface Document<T = unknown> {
   metadata?: T | undefined;
 }
 
+/** A document reference that never includes document text or an embedding vector. */
+export interface DocumentSummary<T = unknown> {
+  id: string;
+  metadata?: T | undefined;
+}
+
 /**
  * Semantic search engine with text-to-vector embedding
  *
@@ -220,6 +226,33 @@ export class SemanticSearch<T = unknown> {
 
   isInitialized(): boolean {
     return this.embedder.isInitialized();
+  }
+
+  /**
+   * Retrieves one stored document without exposing its embedding vector.
+   * Returns undefined when the document ID is not present.
+   */
+  getDocument(id: string): Document<T> | undefined {
+    const text = this.documents.get(id);
+    if (text === undefined) {
+      return undefined;
+    }
+
+    return {
+      id,
+      text,
+      metadata: this.vectorStore.get(id)?.metadata,
+    };
+  }
+
+  /**
+   * Lists document IDs and metadata without exposing document text or vectors.
+   */
+  listDocuments(): DocumentSummary<T>[] {
+    return this.vectorStore.keys().map((id) => ({
+      id,
+      metadata: this.vectorStore.get(id)?.metadata,
+    }));
   }
 
   /** For persistence */

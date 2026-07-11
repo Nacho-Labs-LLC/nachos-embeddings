@@ -21,7 +21,13 @@
  * ```
  */
 
-export { SemanticSearch, type SemanticSearchConfig, type SemanticSearchOptions, type Document } from './semantic-search.js';
+export {
+  SemanticSearch,
+  type SemanticSearchConfig,
+  type SemanticSearchOptions,
+  type Document,
+  type DocumentSummary,
+} from './semantic-search.js';
 
 export {
   EnhancedSemanticSearch,

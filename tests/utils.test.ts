@@ -45,13 +45,7 @@ describe('utils', () => {
       const sentence3 = 'c'.repeat(50) + '.';
       const text = sentence1 + ' ' + sentence2 + ' ' + sentence3;
 
-      const chunksNoOverlap = chunkText(text, { maxTokens: 15, overlapTokens: 0 });
-      // s1 -> 13.
-      // s2 -> 13. (13+13=26 > 15) -> Push s1. overlap=max(1, 0) = 1 (wait, max is 1).
-      // Ah, overlap is Math.max(1, Math.floor((overlapTokens / maxTokens) * currentChunk.length))
-      // So overlap is ALWAYS at least 1 sentence.
-      // This means s1 is kept!
-      // Let's just verify lengths instead of exact strict equality without overlaps
+      // With overlapTokens=0, chunkText still retains one sentence of overlap.
 
       const chunks = chunkText(text, { maxTokens: 15, overlapTokens: 0 });
       expect(chunks.length).toBeGreaterThan(1);

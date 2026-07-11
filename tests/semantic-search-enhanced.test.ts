@@ -50,8 +50,38 @@ describe('EnhancedSemanticSearch', () => {
       expect(fsPromises.readFile).toHaveBeenCalledWith(storePath, 'utf-8');
       expect(warnSpy).toHaveBeenCalledWith(
         `[EnhancedSemanticSearch] Failed to load from ${storePath}:`,
-        testError
+        testError.message
       );
     });
+  });
+
+  it('inherits safe document reads without exposing vectors', () => {
+    const search = new EnhancedSemanticSearch<{ tag: string }>({
+      deduplicateExact: false,
+    });
+    search.import([
+      {
+        id: 'doc1',
+        text: 'hello',
+        vector: [1, 0, 0],
+        metadata: { tag: 'greeting' },
+      },
+    ]);
+
+    const document = search.getDocument('doc1');
+    const summaries = search.listDocuments();
+
+    expect(document).toEqual({
+      id: 'doc1',
+      text: 'hello',
+      metadata: { tag: 'greeting' },
+    });
+    expect(document).not.toHaveProperty('vector');
+    expect(summaries).toEqual([
+      { id: 'doc1', metadata: { tag: 'greeting' } },
+    ]);
+    expect(summaries[0]).not.toHaveProperty('text');
+    expect(summaries[0]).not.toHaveProperty('vector');
+    expect(search.getDocument('missing')).toBeUndefined();
   });
 });
