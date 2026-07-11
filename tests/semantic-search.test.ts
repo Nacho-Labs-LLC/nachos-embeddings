@@ -12,6 +12,48 @@ describe('SemanticSearch', () => {
     expect(search.size()).toBe(0);
   });
 
+  it('reads one document without exposing its vector', () => {
+    const search = new SemanticSearch<{ tag: string }>();
+    search.import([
+      {
+        id: 'doc1',
+        text: 'hello',
+        vector: [1, 0, 0],
+        metadata: { tag: 'greeting' },
+      },
+    ]);
+
+    expect(search.getDocument('doc1')).toEqual({
+      id: 'doc1',
+      text: 'hello',
+      metadata: { tag: 'greeting' },
+    });
+    expect(search.getDocument('doc1')).not.toHaveProperty('vector');
+  });
+
+  it('returns undefined when reading a missing document', () => {
+    const search = new SemanticSearch();
+
+    expect(search.getDocument('missing')).toBeUndefined();
+  });
+
+  it('lists document IDs and metadata without exposing document text or vectors', () => {
+    const search = new SemanticSearch<{ tag: string }>();
+    search.import([
+      { id: 'a', text: 'alpha', vector: [1, 0], metadata: { tag: 'first' } },
+      { id: 'b', text: 'beta', vector: [0, 1], metadata: { tag: 'second' } },
+    ]);
+
+    const summaries = search.listDocuments();
+
+    expect(summaries).toEqual([
+      { id: 'a', metadata: { tag: 'first' } },
+      { id: 'b', metadata: { tag: 'second' } },
+    ]);
+    expect(summaries[0]).not.toHaveProperty('text');
+    expect(summaries[0]).not.toHaveProperty('vector');
+  });
+
   it('removes documents by id', async () => {
     const search = new SemanticSearch();
     // Import pre-computed data to test remove without needing model
