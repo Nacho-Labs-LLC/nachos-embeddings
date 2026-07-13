@@ -4,10 +4,12 @@ import type { BedrockModelAdapter } from '../../src/providers/bedrock/models/typ
 // Mock the AWS SDK
 const mockSend = vi.fn();
 vi.mock('@aws-sdk/client-bedrock-runtime', () => ({
-  BedrockRuntimeClient: vi.fn().mockImplementation(() => ({
-    send: mockSend,
-  })),
-  InvokeModelCommand: vi.fn().mockImplementation((input: unknown) => input),
+  BedrockRuntimeClient: vi.fn(function BedrockRuntimeClient() {
+    return { send: mockSend };
+  }),
+  InvokeModelCommand: vi.fn(function InvokeModelCommand(input: unknown) {
+    return input;
+  }),
 }));
 
 vi.mock('@aws-sdk/credential-provider-ini', () => ({
