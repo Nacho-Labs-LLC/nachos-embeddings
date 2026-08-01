@@ -766,6 +766,13 @@ npm test
 npm run typecheck
 ```
 
+### Toolchain maintenance
+
+TypeScript is intentionally held at 6.0.3: the installed
+`@typescript-eslint/parser` and `@typescript-eslint/eslint-plugin` 8.65.0
+support TypeScript `>=4.8.4 <6.1.0` and reject TypeScript 7.0.2. Revisit this
+pin once typescript-eslint supports it.
+
 ## License
 
 MIT
