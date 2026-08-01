@@ -1,18 +1,18 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { EnhancedSemanticSearch } from '../src/semantic-search-enhanced.js';
-import * as fs from 'node:fs';
-import * as fsPromises from 'node:fs/promises';
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EnhancedSemanticSearch } from "../src/semantic-search-enhanced.js";
+import * as fs from "node:fs";
+import * as fsPromises from "node:fs/promises";
 
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
     existsSync: vi.fn(),
   };
 });
 
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs/promises')>();
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
     readFile: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-describe('EnhancedSemanticSearch', () => {
+describe("EnhancedSemanticSearch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -30,13 +30,13 @@ describe('EnhancedSemanticSearch', () => {
     vi.restoreAllMocks();
   });
 
-  describe('load()', () => {
-    it('handles errors when loading semantic search store fails', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  describe("load()", () => {
+    it("handles errors when loading semantic search store fails", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-      const storePath = '.dummy-store.json';
+      const storePath = ".dummy-store.json";
       vi.mocked(fs.existsSync).mockReturnValue(true);
-      const testError = new Error('Test read error');
+      const testError = new Error("Test read error");
       vi.mocked(fsPromises.readFile).mockRejectedValue(testError);
 
       const search = new EnhancedSemanticSearch({
@@ -47,41 +47,39 @@ describe('EnhancedSemanticSearch', () => {
       await search.load();
 
       expect(fs.existsSync).toHaveBeenCalledWith(storePath);
-      expect(fsPromises.readFile).toHaveBeenCalledWith(storePath, 'utf-8');
+      expect(fsPromises.readFile).toHaveBeenCalledWith(storePath, "utf-8");
       expect(warnSpy).toHaveBeenCalledWith(
         `[EnhancedSemanticSearch] Failed to load from ${storePath}:`,
-        testError.message
+        testError.message,
       );
     });
   });
 
-  it('inherits safe document reads without exposing vectors', () => {
+  it("inherits safe document reads without exposing vectors", () => {
     const search = new EnhancedSemanticSearch<{ tag: string }>({
       deduplicateExact: false,
     });
     search.import([
       {
-        id: 'doc1',
-        text: 'hello',
+        id: "doc1",
+        text: "hello",
         vector: [1, 0, 0],
-        metadata: { tag: 'greeting' },
+        metadata: { tag: "greeting" },
       },
     ]);
 
-    const document = search.getDocument('doc1');
+    const document = search.getDocument("doc1");
     const summaries = search.listDocuments();
 
     expect(document).toEqual({
-      id: 'doc1',
-      text: 'hello',
-      metadata: { tag: 'greeting' },
+      id: "doc1",
+      text: "hello",
+      metadata: { tag: "greeting" },
     });
-    expect(document).not.toHaveProperty('vector');
-    expect(summaries).toEqual([
-      { id: 'doc1', metadata: { tag: 'greeting' } },
-    ]);
-    expect(summaries[0]).not.toHaveProperty('text');
-    expect(summaries[0]).not.toHaveProperty('vector');
-    expect(search.getDocument('missing')).toBeUndefined();
+    expect(document).not.toHaveProperty("vector");
+    expect(summaries).toEqual([{ id: "doc1", metadata: { tag: "greeting" } }]);
+    expect(summaries[0]).not.toHaveProperty("text");
+    expect(summaries[0]).not.toHaveProperty("vector");
+    expect(search.getDocument("missing")).toBeUndefined();
   });
 });

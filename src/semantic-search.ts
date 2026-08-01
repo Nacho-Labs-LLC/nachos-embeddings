@@ -2,12 +2,12 @@
  * High-level semantic search API combining embedder + vector store
  */
 
-import type { EmbeddingProvider } from './providers/types.js';
-import { Embedder } from './embedder.js';
-import { VectorStore, type SearchResult } from './vector-store.js';
-import { writeFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
-import { existsSync } from 'fs';
+import type { EmbeddingProvider } from "./providers/types.js";
+import { Embedder } from "./embedder.js";
+import { VectorStore, type SearchResult } from "./vector-store.js";
+import { writeFile, mkdir } from "fs/promises";
+import { dirname } from "path";
+import { existsSync } from "fs";
 
 export interface SemanticSearchConfig {
   /**
@@ -106,16 +106,22 @@ export class SemanticSearch<T = unknown> {
     };
 
     if (this.config.autoSave && !this.config.storePath) {
-      throw new Error('storePath is required when autoSave is enabled');
+      throw new Error("storePath is required when autoSave is enabled");
     }
 
-    this.embedder = config.provider ?? new Embedder({
-      ...(config.model !== undefined && { model: config.model }),
-      ...(config.cacheDir !== undefined && { cacheDir: config.cacheDir }),
-      ...(config.progressLogging !== undefined && { progressLogging: config.progressLogging }),
-    });
+    this.embedder =
+      config.provider ??
+      new Embedder({
+        ...(config.model !== undefined && { model: config.model }),
+        ...(config.cacheDir !== undefined && { cacheDir: config.cacheDir }),
+        ...(config.progressLogging !== undefined && {
+          progressLogging: config.progressLogging,
+        }),
+      });
     this.vectorStore = new VectorStore<T>({
-      ...(config.minSimilarity !== undefined && { minSimilarity: config.minSimilarity }),
+      ...(config.minSimilarity !== undefined && {
+        minSimilarity: config.minSimilarity,
+      }),
     });
   }
 
@@ -129,7 +135,11 @@ export class SemanticSearch<T = unknown> {
       if (!existsSync(dir)) {
         await mkdir(dir, { recursive: true });
       }
-      await writeFile(this.config.storePath, JSON.stringify(this.export(), null, 2), 'utf-8');
+      await writeFile(
+        this.config.storePath,
+        JSON.stringify(this.export(), null, 2),
+        "utf-8",
+      );
     }
   }
 
@@ -138,7 +148,7 @@ export class SemanticSearch<T = unknown> {
       const existingId = this.documentTexts.get(doc.text);
       if (existingId !== undefined) {
         console.warn(
-          `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`
+          `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`,
         );
         return;
       }
@@ -159,7 +169,7 @@ export class SemanticSearch<T = unknown> {
       filteredDocs = docs.filter((doc) => {
         if (this.documentTexts.has(doc.text) || batchSeenTexts.has(doc.text)) {
           console.warn(
-            `[SemanticSearch] Duplicate content detected in batch: "${doc.id}". Skipping.`
+            `[SemanticSearch] Duplicate content detected in batch: "${doc.id}". Skipping.`,
           );
           return false;
         }
@@ -189,14 +199,14 @@ export class SemanticSearch<T = unknown> {
       limit?: number;
       minSimilarity?: number;
       filter?: (metadata?: T) => boolean;
-    }
+    },
   ): Promise<Array<SearchResult<T> & { text: string }>> {
     const queryVector = await this.embedder.embed(query);
     const results = this.vectorStore.search(queryVector, options);
 
     return results.map((result) => ({
       ...result,
-      text: this.documents.get(result.id) ?? '',
+      text: this.documents.get(result.id) ?? "",
     }));
   }
 
@@ -265,7 +275,7 @@ export class SemanticSearch<T = unknown> {
     const vectors = this.vectorStore.export();
     return vectors.map((v) => ({
       id: v.id,
-      text: this.documents.get(v.id) ?? '',
+      text: this.documents.get(v.id) ?? "",
       vector: v.vector,
       metadata: v.metadata,
     }));
@@ -278,7 +288,7 @@ export class SemanticSearch<T = unknown> {
       text: string;
       vector: number[];
       metadata?: T | undefined;
-    }>
+    }>,
   ): void {
     for (const item of data) {
       this.vectorStore.add(item.id, item.vector, item.metadata);
@@ -290,12 +300,16 @@ export class SemanticSearch<T = unknown> {
   /** Manual save (when autoSave is disabled) */
   async persist(): Promise<void> {
     if (!this.config.storePath) {
-      throw new Error('storePath must be configured to use persist()');
+      throw new Error("storePath must be configured to use persist()");
     }
     const dir = dirname(this.config.storePath);
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
-    await writeFile(this.config.storePath, JSON.stringify(this.export(), null, 2), 'utf-8');
+    await writeFile(
+      this.config.storePath,
+      JSON.stringify(this.export(), null, 2),
+      "utf-8",
+    );
   }
 }
