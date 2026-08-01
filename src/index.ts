@@ -27,14 +27,14 @@ export {
   type SemanticSearchOptions,
   type Document,
   type DocumentSummary,
-} from './semantic-search.js';
+} from "./semantic-search.js";
 
 export {
   EnhancedSemanticSearch,
   type EnhancedSemanticSearchConfig,
-} from './semantic-search-enhanced.js';
+} from "./semantic-search-enhanced.js";
 
-export { Embedder, type EmbedderConfig } from './embedder.js';
+export { Embedder, type EmbedderConfig } from "./embedder.js";
 
 export {
   VectorStore,
@@ -43,10 +43,16 @@ export {
   type VectorStoreConfig,
   type VectorEntry,
   type SearchResult,
-} from './vector-store.js';
+} from "./vector-store.js";
 
-export { chunkText, estimateTokens, normalizeText } from './utils.js';
+export { chunkText, estimateTokens, normalizeText } from "./utils.js";
 
 // Provider system
-export type { EmbeddingProvider, BaseProviderConfig } from './providers/types.js';
-export { TransformersProvider, type TransformersProviderConfig } from './providers/transformers-provider.js';
+export type {
+  EmbeddingProvider,
+  BaseProviderConfig,
+} from "./providers/types.js";
+export {
+  TransformersProvider,
+  type TransformersProviderConfig,
+} from "./providers/transformers-provider.js";

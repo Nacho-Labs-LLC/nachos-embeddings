@@ -37,6 +37,7 @@
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"README.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"README.md\"",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo",
     "prepublishOnly": "npm run build",
@@ -92,19 +93,22 @@
     }
   },
   "devDependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
-    "@aws-sdk/credential-provider-ini": "^3.972.13",
-    "@aws-sdk/credential-providers": "^3.1079.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1101.0",
+    "@aws-sdk/credential-provider-ini": "^3.973.10",
+    "@aws-sdk/credential-providers": "^3.1101.0",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^22.0.0",
+    "@types/node": "^22.20.1",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/coverage-v8": "^4.1.10",
-    "eslint": "^10.7.0",
+    "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^15.0.0",
-    "prettier": "^3.0.0",
-    "typescript": "^5.7.0",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.8"
   }
 }

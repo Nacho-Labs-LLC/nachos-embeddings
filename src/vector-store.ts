@@ -66,7 +66,9 @@ export class VectorStore<T = unknown> {
     this.vectors.set(id, { id, vector, metadata });
   }
 
-  addBatch(entries: Array<{ id: string; vector: number[]; metadata?: T }>): void {
+  addBatch(
+    entries: Array<{ id: string; vector: number[]; metadata?: T }>,
+  ): void {
     for (const entry of entries) {
       this.add(entry.id, entry.vector, entry.metadata);
     }
@@ -79,7 +81,7 @@ export class VectorStore<T = unknown> {
       limit?: number;
       minSimilarity?: number;
       filter?: (metadata?: T) => boolean;
-    }
+    },
   ): SearchResult<T>[] {
     const results: SearchResult<T>[] = [];
     const minSim = options?.minSimilarity ?? this.config.minSimilarity;

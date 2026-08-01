@@ -1,4 +1,4 @@
-import type { BedrockModelAdapter } from './types.js';
+import type { BedrockModelAdapter } from "./types.js";
 
 const VALID_DIMENSIONS = [256, 512, 1024] as const;
 type TitanDimension = (typeof VALID_DIMENSIONS)[number];
@@ -15,7 +15,7 @@ interface TitanResponse {
 }
 
 export class TitanV2Adapter implements BedrockModelAdapter {
-  readonly modelName = 'Amazon Titan Text Embeddings V2';
+  readonly modelName = "Amazon Titan Text Embeddings V2";
   readonly defaultDimension = 1024;
 
   formatRequest(text: string, options?: Record<string, unknown>): string {
@@ -23,12 +23,12 @@ export class TitanV2Adapter implements BedrockModelAdapter {
       inputText: text,
     };
 
-    const dimensions = options?.['dimensions'];
+    const dimensions = options?.["dimensions"];
     if (dimensions !== undefined) {
       request.dimensions = dimensions as TitanDimension;
     }
 
-    const normalize = options?.['normalize'];
+    const normalize = options?.["normalize"];
     if (normalize !== undefined) {
       request.normalize = normalize as boolean;
     } else {
@@ -44,21 +44,21 @@ export class TitanV2Adapter implements BedrockModelAdapter {
   }
 
   validateOptions(options: Record<string, unknown>): void {
-    const dimensions = options['dimensions'];
+    const dimensions = options["dimensions"];
     if (dimensions !== undefined) {
       if (
-        typeof dimensions !== 'number' ||
+        typeof dimensions !== "number" ||
         !VALID_DIMENSIONS.includes(dimensions as TitanDimension)
       ) {
         throw new Error(
           `Invalid dimensions for Titan V2: ${String(dimensions)}. ` +
-            `Valid values: ${VALID_DIMENSIONS.join(', ')}`,
+            `Valid values: ${VALID_DIMENSIONS.join(", ")}`,
         );
       }
     }
 
-    const normalize = options['normalize'];
-    if (normalize !== undefined && typeof normalize !== 'boolean') {
+    const normalize = options["normalize"];
+    if (normalize !== undefined && typeof normalize !== "boolean") {
       throw new Error(
         `Invalid normalize for Titan V2: expected boolean, got ${typeof normalize}`,
       );
