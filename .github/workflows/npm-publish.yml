@@ -26,7 +26,7 @@ jobs:
 
       - name: Verify release tag matches package version
         run: |
-          test "${{ github.event.release.tag_name }}" = "v$(node -p \"require('./package.json').version\")"
+          test "${{ github.event.release.tag_name }}" = "v$(node -p "require('./package.json').version")"
 
       - run: npm ci
       - run: npm run lint
