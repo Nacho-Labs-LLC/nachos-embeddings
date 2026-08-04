@@ -1,6 +1,6 @@
 {
   "name": "@nacho-labs/nachos-embeddings",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Modular vector embeddings and semantic search — local Transformers.js or AWS Bedrock providers",
   "type": "module",
   "main": "./dist/index.js",
@@ -71,7 +71,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nacho-labs-llc/nachos-embeddings.git"
+    "url": "git+https://github.com/Nacho-Labs-LLC/nachos-embeddings.git"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0"
