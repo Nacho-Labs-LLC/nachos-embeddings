@@ -4,9 +4,9 @@ Local, privacy-first vector embeddings and semantic search with a modular provid
 
 ## Prerequisites
 
-- **Node.js 18+** (uses ESM and top-level await)
+- **Node.js 20.9+** (uses ESM and top-level await; required by the Sharp dependency)
 - **Internet connection on first run** to download the embedding model (~25MB, cached permanently after that)
-- **For Bedrock**: Node.js 20+, AWS account with Bedrock model access enabled
+- **For Bedrock**: AWS account with Bedrock model access enabled
 
 ## Features
 

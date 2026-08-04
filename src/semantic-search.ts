@@ -131,15 +131,7 @@ export class SemanticSearch<T = unknown> {
 
   private async autoPersist(): Promise<void> {
     if (this.config.autoSave && this.config.storePath) {
-      const dir = dirname(this.config.storePath);
-      if (!existsSync(dir)) {
-        await mkdir(dir, { recursive: true });
-      }
-      await writeFile(
-        this.config.storePath,
-        JSON.stringify(this.export(), null, 2),
-        "utf-8",
-      );
+      await this.writeStore(this.config.storePath);
     }
   }
 
@@ -302,14 +294,14 @@ export class SemanticSearch<T = unknown> {
     if (!this.config.storePath) {
       throw new Error("storePath must be configured to use persist()");
     }
-    const dir = dirname(this.config.storePath);
+    await this.writeStore(this.config.storePath);
+  }
+
+  private async writeStore(storePath: string): Promise<void> {
+    const dir = dirname(storePath);
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
-    await writeFile(
-      this.config.storePath,
-      JSON.stringify(this.export(), null, 2),
-      "utf-8",
-    );
+    await writeFile(storePath, JSON.stringify(this.export(), null, 2), "utf-8");
   }
 }

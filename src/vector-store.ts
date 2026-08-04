@@ -83,29 +83,30 @@ export class VectorStore<T = unknown> {
       filter?: (metadata?: T) => boolean;
     },
   ): SearchResult<T>[] {
-    const results: SearchResult<T>[] = [];
     const minSim = options?.minSimilarity ?? this.config.minSimilarity;
     const limit = options?.limit ?? this.config.defaultLimit;
+    return Array.from(this.vectors.values())
+      .map((entry) =>
+        this.matchEntry(entry, queryVector, minSim, options?.filter),
+      )
+      .filter((result): result is SearchResult<T> => result !== undefined)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, limit);
+  }
 
-    for (const entry of this.vectors.values()) {
-      if (options?.filter && !options.filter(entry.metadata)) {
-        continue;
-      }
-
-      const similarity = cosineSimilarity(queryVector, entry.vector);
-
-      if (similarity >= minSim) {
-        results.push({
-          id: entry.id,
-          similarity,
-          metadata: entry.metadata,
-        });
-      }
+  private matchEntry(
+    entry: VectorEntry<T>,
+    queryVector: number[],
+    minSimilarity: number,
+    filter: ((metadata?: T) => boolean) | undefined,
+  ): SearchResult<T> | undefined {
+    if (filter && !filter(entry.metadata)) {
+      return undefined;
     }
-
-    results.sort((a, b) => b.similarity - a.similarity);
-
-    return results.slice(0, limit);
+    const similarity = cosineSimilarity(queryVector, entry.vector);
+    return similarity >= minSimilarity
+      ? { id: entry.id, similarity, metadata: entry.metadata }
+      : undefined;
   }
 
   get(id: string): VectorEntry<T> | undefined {

@@ -1,30 +1,30 @@
-import js from '@eslint/js';
-import eslintConfigPrettier from 'eslint-config-prettier';
-import tseslint from '@typescript-eslint/eslint-plugin';
-import tsParser from '@typescript-eslint/parser';
-import globals from 'globals';
+import js from "@eslint/js";
+import eslintConfigPrettier from "eslint-config-prettier";
+import tseslint from "@typescript-eslint/eslint-plugin";
+import tsParser from "@typescript-eslint/parser";
+import globals from "globals";
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    ignores: ["dist/**", "node_modules/**"],
   },
   js.configs.recommended,
   {
-    files: ['src/**/*.ts', 'tests/**/*.ts'],
+    files: ["src/**/*.ts", "tests/**/*.ts", "bin/**/*.js"],
     languageOptions: {
       globals: globals.node,
       parser: tsParser,
       parserOptions: {
-        sourceType: 'module',
+        sourceType: "module",
       },
     },
     plugins: {
-      '@typescript-eslint': tseslint,
+      "@typescript-eslint": tseslint,
     },
     rules: {
       ...tseslint.configs.recommended.rules,
       // Optional AWS SDK modules are dynamically loaded and intentionally opaque.
-      '@typescript-eslint/no-explicit-any': 'off',
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
   eslintConfigPrettier,
