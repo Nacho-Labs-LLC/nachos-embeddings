@@ -24,45 +24,81 @@
  * All diagnostics go to stderr so stdout stays pure JSONL.
  */
 
-import { Embedder } from '../dist/embedder.js';
+import { Embedder } from "../dist/embedder.js";
+
+const VALUE_OPTIONS = {
+  "--provider": "provider",
+  "--model": "model",
+  "--region": "region",
+};
 
 function parseArgs(argv) {
-  const args = { _: [], provider: 'transformers', model: undefined, region: undefined,
-                 stdin: false, json: false };
+  const args = {
+    _: [],
+    provider: "transformers",
+    model: undefined,
+    region: undefined,
+    stdin: false,
+    json: false,
+  };
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--stdin') args.stdin = true;
-    else if (a === '--json') args.json = true;
-    else if (a === '--provider') args.provider = argv[++i];
-    else if (a === '--model') args.model = argv[++i];
-    else if (a === '--region') args.region = argv[++i];
-    else if (!a.startsWith('--')) args._.push(a);
+    i += parseArgument(args, argv, i);
   }
   return args;
+}
+
+function parseArgument(args, argv, index) {
+  const argument = argv[index];
+  const valueOption = VALUE_OPTIONS[argument];
+  if (valueOption !== undefined) {
+    args[valueOption] = argv[index + 1];
+    return 1;
+  }
+  if (setBooleanFlag(args, argument)) return 0;
+  addPositionalArgument(args, argument);
+  return 0;
+}
+
+function addPositionalArgument(args, argument) {
+  if (argument && !argument.startsWith("--")) args._.push(argument);
+}
+
+function setBooleanFlag(args, argument) {
+  const flag = argument?.slice(2);
+  if (flag !== "stdin" && flag !== "json") return false;
+  args[flag] = true;
+  return true;
 }
 
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function makeProvider(args) {
-  if (args.provider === 'bedrock') {
-    // Lazy import so the local (transformers) path needs no AWS SDK.
-    const { BedrockProvider } = await import('../dist/providers/bedrock/index.js');
-    const cfg = {};
-    if (args.model) cfg.modelId = args.model;
-    if (args.region) cfg.region = args.region;
-    const p = new BedrockProvider(cfg);
-    await p.init();
-    return p;
+  if (args.provider === "bedrock") {
+    return makeBedrockProvider(args);
   }
-  const cfg = {};
-  if (args.model) cfg.model = args.model;
-  const e = new Embedder(cfg);
-  await e.init();
-  return e;
+  return makeTransformersProvider(args);
+}
+
+async function makeBedrockProvider({ model, region }) {
+  // Lazy import so the local (transformers) path needs no AWS SDK.
+  const { BedrockProvider } =
+    await import("../dist/providers/bedrock/index.js");
+  const provider = new BedrockProvider({
+    ...(model && { modelId: model }),
+    ...(region && { region }),
+  });
+  await provider.init();
+  return provider;
+}
+
+async function makeTransformersProvider({ model }) {
+  const provider = new Embedder({ ...(model && { model }) });
+  await provider.init();
+  return provider;
 }
 
 const USAGE =
@@ -71,8 +107,8 @@ const USAGE =
 
 function parseLines(raw) {
   // One text per line; preserve order. Drop only a trailing empty line.
-  const lines = raw.split('\n');
-  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  const lines = raw.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
   return lines;
 }
 
@@ -83,21 +119,31 @@ function fail(stage, err) {
 
 async function embedLines(provider, lines) {
   const vectors = await provider.embedBatch(lines);
-  process.stdout.write(vectors.map((v) => JSON.stringify(v)).join('\n') + '\n');
+  process.stdout.write(vectors.map((v) => JSON.stringify(v)).join("\n") + "\n");
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (args._[0] !== 'embed' || !args.stdin || !args.json) {
+  if (!isEmbedCommand(args)) {
     process.stderr.write(USAGE);
     process.exit(1);
   }
 
+  await runEmbedding(args);
+}
+
+function isEmbedCommand(args) {
+  return args._[0] === "embed" && args.stdin && args.json;
+}
+
+async function runEmbedding(args) {
   const lines = parseLines(await readStdin());
   if (lines.length === 0) process.exit(0);
 
-  const provider = await makeProvider(args).catch((e) => fail('init failed', e));
-  await embedLines(provider, lines).catch((e) => fail('embed failed', e));
+  const provider = await makeProvider(args).catch((e) =>
+    fail("init failed", e),
+  );
+  await embedLines(provider, lines).catch((e) => fail("embed failed", e));
 }
 
-main().catch((err) => fail('fatal', err));
+main().catch((err) => fail("fatal", err));

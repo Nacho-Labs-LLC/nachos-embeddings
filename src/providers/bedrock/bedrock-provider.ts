@@ -47,6 +47,56 @@ interface ResolvedConfig {
   progressLogging: boolean;
 }
 
+function resolveConfig(config: BedrockProviderConfig): {
+  adapter: BedrockModelAdapter;
+  resolvedConfig: ResolvedConfig;
+} {
+  const modelId = config.modelId ?? "amazon.titan-embed-text-v2:0";
+  const adapter = config.modelAdapter ?? resolveModelAdapter(modelId);
+
+  if (config.modelOptions && adapter.validateOptions) {
+    adapter.validateOptions(config.modelOptions);
+  }
+
+  return {
+    adapter,
+    resolvedConfig: resolveRuntimeConfig(config, modelId),
+  };
+}
+
+function resolveRuntimeConfig(
+  config: BedrockProviderConfig,
+  modelId: string,
+): ResolvedConfig {
+  return {
+    region: config.region ?? "us-east-1",
+    modelId,
+    credentials: resolveCredentialsConfig(config.credentials),
+    endpoint: config.endpoint,
+    batchSize: config.batchSize ?? 25,
+    maxConcurrency: config.maxConcurrency ?? 5,
+    timeout: config.timeout ?? 30000,
+    retry: resolveRetryConfig(config.retry),
+    modelOptions: config.modelOptions,
+    progressLogging: config.progressLogging ?? false,
+  };
+}
+
+function resolveCredentialsConfig(
+  credentials: BedrockCredentials | undefined,
+): ResolvedConfig["credentials"] {
+  return { strategy: credentials?.strategy ?? "default", ...credentials };
+}
+
+function resolveRetryConfig(
+  retry: BedrockRetryConfig | undefined,
+): Required<BedrockRetryConfig> {
+  return {
+    maxAttempts: retry?.maxAttempts ?? 3,
+    backoffMs: retry?.backoffMs ?? 200,
+  };
+}
+
 export class BedrockProvider implements EmbeddingProvider {
   readonly name = "bedrock";
 
@@ -58,32 +108,9 @@ export class BedrockProvider implements EmbeddingProvider {
   private dimension: number | null = null;
 
   constructor(config: BedrockProviderConfig = {}) {
-    const modelId = config.modelId ?? "amazon.titan-embed-text-v2:0";
-
-    this.adapter = config.modelAdapter ?? resolveModelAdapter(modelId);
-
-    if (config.modelOptions && this.adapter.validateOptions) {
-      this.adapter.validateOptions(config.modelOptions);
-    }
-
-    this.resolvedConfig = {
-      region: config.region ?? "us-east-1",
-      modelId,
-      credentials: {
-        strategy: config.credentials?.strategy ?? "default",
-        ...config.credentials,
-      },
-      endpoint: config.endpoint,
-      batchSize: config.batchSize ?? 25,
-      maxConcurrency: config.maxConcurrency ?? 5,
-      timeout: config.timeout ?? 30000,
-      retry: {
-        maxAttempts: config.retry?.maxAttempts ?? 3,
-        backoffMs: config.retry?.backoffMs ?? 200,
-      },
-      modelOptions: config.modelOptions,
-      progressLogging: config.progressLogging ?? false,
-    };
+    const { adapter, resolvedConfig } = resolveConfig(config);
+    this.adapter = adapter;
+    this.resolvedConfig = resolvedConfig;
   }
 
   async init(): Promise<void> {
@@ -91,88 +118,9 @@ export class BedrockProvider implements EmbeddingProvider {
       return;
     }
 
-    let BedrockRuntimeClient: any;
-    let InvokeModelCommand: any;
-
-    try {
-      const sdk = await import("@aws-sdk/client-bedrock-runtime");
-      BedrockRuntimeClient = sdk.BedrockRuntimeClient;
-      InvokeModelCommand = sdk.InvokeModelCommand;
-    } catch {
-      throw new Error(
-        "@aws-sdk/client-bedrock-runtime is required for BedrockProvider. " +
-          "Install it: npm install @aws-sdk/client-bedrock-runtime",
-      );
-    }
-
+    const { BedrockRuntimeClient, InvokeModelCommand } = await this.loadSdk();
     this.InvokeModelCommandCtor = InvokeModelCommand;
-
-    const clientConfig: Record<string, unknown> = {
-      region: this.resolvedConfig.region,
-    };
-
-    const { strategy } = this.resolvedConfig.credentials;
-
-    if (strategy === "profile") {
-      try {
-        const { fromIni } = await import("@aws-sdk/credential-provider-ini");
-        const profile = this.resolvedConfig.credentials.profile;
-        clientConfig["credentials"] = fromIni(profile ? { profile } : {});
-      } catch {
-        throw new Error(
-          "@aws-sdk/credential-provider-ini is required for profile credential strategy. " +
-            "It should be available with @aws-sdk/client-bedrock-runtime.",
-        );
-      }
-    } else if (strategy === "explicit") {
-      const { accessKeyId, secretAccessKey, sessionToken } =
-        this.resolvedConfig.credentials;
-      if (!accessKeyId || !secretAccessKey) {
-        throw new Error(
-          "Explicit credential strategy requires 'accessKeyId' and 'secretAccessKey'.",
-        );
-      }
-      clientConfig["credentials"] = {
-        accessKeyId,
-        secretAccessKey,
-        ...(sessionToken !== undefined ? { sessionToken } : {}),
-      };
-    } else if (strategy === "role") {
-      const { roleArn } = this.resolvedConfig.credentials;
-      if (!roleArn) {
-        throw new Error("Role credential strategy requires 'roleArn'.");
-      }
-      try {
-        const { fromTemporaryCredentials } =
-          await import("@aws-sdk/credential-providers");
-        const params: Record<string, unknown> = {
-          params: {
-            RoleArn: roleArn,
-            RoleSessionName:
-              this.resolvedConfig.credentials.roleSessionName ??
-              "nachos-embeddings",
-            ...(this.resolvedConfig.credentials.externalId !== undefined
-              ? { ExternalId: this.resolvedConfig.credentials.externalId }
-              : {}),
-          },
-        };
-        clientConfig["credentials"] = fromTemporaryCredentials(params as any);
-      } catch {
-        throw new Error(
-          "@aws-sdk/credential-providers is required for role credential strategy. " +
-            "Install it: npm install @aws-sdk/credential-providers",
-        );
-      }
-    }
-    // 'default' strategy: no explicit credentials — SDK auto-resolves
-
-    if (this.resolvedConfig.endpoint) {
-      clientConfig["endpoint"] = this.resolvedConfig.endpoint;
-    }
-
-    if (this.resolvedConfig.timeout) {
-      clientConfig["requestTimeout"] = this.resolvedConfig.timeout;
-    }
+    const clientConfig = await this.createClientConfig();
 
     this.client = new BedrockRuntimeClient(clientConfig);
 
@@ -232,6 +180,102 @@ export class BedrockProvider implements EmbeddingProvider {
 
   getConfig(): Readonly<ResolvedConfig> {
     return { ...this.resolvedConfig };
+  }
+
+  private async loadSdk(): Promise<{
+    BedrockRuntimeClient: any;
+    InvokeModelCommand: any;
+  }> {
+    try {
+      return await import("@aws-sdk/client-bedrock-runtime");
+    } catch {
+      throw new Error(
+        "@aws-sdk/client-bedrock-runtime is required for BedrockProvider. " +
+          "Install it: npm install @aws-sdk/client-bedrock-runtime",
+      );
+    }
+  }
+
+  private async createClientConfig(): Promise<Record<string, unknown>> {
+    const config: Record<string, unknown> = {
+      region: this.resolvedConfig.region,
+      ...(this.resolvedConfig.endpoint && {
+        endpoint: this.resolvedConfig.endpoint,
+      }),
+      ...(this.resolvedConfig.timeout && {
+        requestTimeout: this.resolvedConfig.timeout,
+      }),
+    };
+    const credentials = await this.resolveCredentials();
+    if (credentials) {
+      config["credentials"] = credentials;
+    }
+    return config;
+  }
+
+  private async resolveCredentials(): Promise<unknown> {
+    switch (this.resolvedConfig.credentials.strategy) {
+      case "profile":
+        return this.profileCredentials();
+      case "explicit":
+        return this.explicitCredentials();
+      case "role":
+        return this.roleCredentials();
+      default:
+        return undefined;
+    }
+  }
+
+  private async profileCredentials(): Promise<unknown> {
+    try {
+      const { fromIni } = await import("@aws-sdk/credential-provider-ini");
+      const { profile } = this.resolvedConfig.credentials;
+      return fromIni(profile ? { profile } : {});
+    } catch {
+      throw new Error(
+        "@aws-sdk/credential-provider-ini is required for profile credential strategy. " +
+          "It should be available with @aws-sdk/client-bedrock-runtime.",
+      );
+    }
+  }
+
+  private explicitCredentials(): Record<string, string> {
+    const { accessKeyId, secretAccessKey, sessionToken } =
+      this.resolvedConfig.credentials;
+    if (!accessKeyId || !secretAccessKey) {
+      throw new Error(
+        "Explicit credential strategy requires 'accessKeyId' and 'secretAccessKey'.",
+      );
+    }
+    return {
+      accessKeyId,
+      secretAccessKey,
+      ...(sessionToken !== undefined ? { sessionToken } : {}),
+    };
+  }
+
+  private async roleCredentials(): Promise<unknown> {
+    const { roleArn, roleSessionName, externalId } =
+      this.resolvedConfig.credentials;
+    if (!roleArn) {
+      throw new Error("Role credential strategy requires 'roleArn'.");
+    }
+    try {
+      const { fromTemporaryCredentials } =
+        await import("@aws-sdk/credential-providers");
+      return fromTemporaryCredentials({
+        params: {
+          RoleArn: roleArn,
+          RoleSessionName: roleSessionName ?? "nachos-embeddings",
+          ...(externalId !== undefined ? { ExternalId: externalId } : {}),
+        },
+      } as any);
+    } catch {
+      throw new Error(
+        "@aws-sdk/credential-providers is required for role credential strategy. " +
+          "Install it: npm install @aws-sdk/credential-providers",
+      );
+    }
   }
 
   private async embedSingle(text: string): Promise<number[]> {

@@ -28,6 +28,33 @@ interface DocumentMetadata {
   [key: string]: unknown;
 }
 
+function resolveEnhancedConfig(
+  config: EnhancedSemanticSearchConfig,
+): Omit<Required<EnhancedSemanticSearchConfig>, "provider"> {
+  const defaults = {
+    model: "Xenova/all-MiniLM-L6-v2",
+    minSimilarity: 0.4,
+    cacheDir: ".cache/transformers",
+    progressLogging: false,
+    autoSave: false,
+    storePath: ".semantic-store.json",
+    autoChunk: false,
+    maxChunkTokens: 500,
+    chunkOverlap: 50,
+    deduplication: true,
+    deduplicateExact: true,
+    deduplicateSimilarity: 0,
+    temporalBoost: false,
+    verbose: false,
+  };
+  return {
+    ...defaults,
+    ...Object.fromEntries(
+      Object.entries(config).filter(([, value]) => value !== undefined),
+    ),
+  };
+}
+
 export class EnhancedSemanticSearch<
   T extends DocumentMetadata = DocumentMetadata,
 > extends SemanticSearch<T> {
@@ -40,24 +67,7 @@ export class EnhancedSemanticSearch<
 
   constructor(config: EnhancedSemanticSearchConfig = {}) {
     super(config);
-
-    this.enhancedConfig = {
-      ...config,
-      model: config.model ?? "Xenova/all-MiniLM-L6-v2",
-      minSimilarity: config.minSimilarity ?? 0.4,
-      cacheDir: config.cacheDir ?? ".cache/transformers",
-      progressLogging: config.progressLogging ?? false,
-      autoSave: config.autoSave ?? false,
-      storePath: config.storePath ?? ".semantic-store.json",
-      autoChunk: config.autoChunk ?? false,
-      maxChunkTokens: config.maxChunkTokens ?? 500,
-      chunkOverlap: config.chunkOverlap ?? 50,
-      deduplication: config.deduplication ?? true,
-      deduplicateExact: config.deduplicateExact ?? true,
-      deduplicateSimilarity: config.deduplicateSimilarity ?? 0,
-      temporalBoost: config.temporalBoost ?? false,
-      verbose: config.verbose ?? false,
-    };
+    this.enhancedConfig = resolveEnhancedConfig(config);
   }
 
   override async init(): Promise<void> {

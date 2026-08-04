@@ -67,7 +67,7 @@
   "author": "Nate Richardson <hello@naterichardson.com> (https://naterichardson.com)",
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.9.0"
   },
   "repository": {
     "type": "git",
@@ -109,7 +109,9 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "brace-expansion": "5.0.8",
-    "flatted": "3.4.4"
+    "adm-zip": "0.6.0",
+    "brace-expansion": "5.0.9",
+    "flatted": "3.4.4",
+    "sharp": "0.35.3"
   }
 }
