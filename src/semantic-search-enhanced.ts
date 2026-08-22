@@ -246,8 +246,84 @@ export class EnhancedSemanticSearch<
   }
 
   override async addDocuments(docs: Document<T>[]): Promise<void> {
+    const finalDocs: Document<T>[] = [];
+    const hashesToUpdate: { normalized: string; id: string }[] = [];
+
     for (const doc of docs) {
-      await this.addDocument(doc);
+      const exactDup = await this.checkExactDuplicate(doc.text);
+      if (exactDup) {
+        if (this.enhancedConfig.verbose) {
+          console.log(
+            `[EnhancedSemanticSearch] Skipped exact duplicate: "${doc.id}" matches "${exactDup}"`,
+          );
+        }
+        continue;
+      }
+
+      const fuzzyDup = await this.checkFuzzyDuplicate(doc.text);
+      if (fuzzyDup) {
+        if (this.enhancedConfig.verbose) {
+          console.log(
+            `[EnhancedSemanticSearch] Skipped fuzzy duplicate: "${doc.id}" ~= "${fuzzyDup.id}" (${(fuzzyDup.similarity * 100).toFixed(1)}%)`,
+          );
+        }
+        continue;
+      }
+
+      const metadata = { ...doc.metadata } as T;
+      if (this.enhancedConfig.temporalBoost && !metadata.timestamp) {
+        metadata.timestamp = Date.now();
+      }
+
+      const tokenCount = estimateTokens(doc.text);
+      if (
+        this.enhancedConfig.autoChunk &&
+        tokenCount > this.enhancedConfig.maxChunkTokens
+      ) {
+        const chunks = chunkText(doc.text, {
+          maxTokens: this.enhancedConfig.maxChunkTokens,
+          overlapTokens: this.enhancedConfig.chunkOverlap,
+        });
+
+        if (this.enhancedConfig.verbose) {
+          console.log(
+            `[EnhancedSemanticSearch] Chunking "${doc.id}" into ${chunks.length} parts`,
+          );
+        }
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i]!;
+          const chunkId = chunks.length === 1 ? doc.id : `${doc.id}#chunk${i}`;
+
+          const chunkMetadata = {
+            ...metadata,
+            chunkIndex: i,
+            parentId: doc.id,
+          } as T;
+
+          finalDocs.push({
+            id: chunkId,
+            text: chunk,
+            metadata: chunkMetadata,
+          });
+
+          const normalized = normalizeText(chunk);
+          hashesToUpdate.push({ normalized, id: chunkId });
+        }
+      } else {
+        finalDocs.push({ ...doc, metadata });
+
+        const normalized = normalizeText(doc.text);
+        hashesToUpdate.push({ normalized, id: doc.id });
+      }
+    }
+
+    if (finalDocs.length > 0) {
+      await super.addDocuments(finalDocs);
+      for (const update of hashesToUpdate) {
+        this.textHashes.set(update.normalized, update.id);
+      }
+      await this.save();
     }
   }
 
