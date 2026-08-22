@@ -157,8 +157,8 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   let magnitudeB = 0;
 
   for (let i = 0; i < a.length; i++) {
-    const aVal = a[i] ?? 0;
-    const bVal = b[i] ?? 0;
+    const aVal = a[i] as number;
+    const bVal = b[i] as number;
     dotProduct += aVal * bVal;
     magnitudeA += aVal * aVal;
     magnitudeB += bVal * bVal;
