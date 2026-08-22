@@ -9,6 +9,12 @@ import { writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { existsSync } from "fs";
 
+export interface Logger {
+  log(message: string, ...args: any[]): void;
+  warn(message: string, ...args: any[]): void;
+  error(message: string, ...args: any[]): void;
+}
+
 export interface SemanticSearchConfig {
   /**
    * Embedding model to use
@@ -51,6 +57,12 @@ export interface SemanticSearchConfig {
    * @default true
    */
   deduplication?: boolean;
+
+  /**
+   * Optional logger instance
+   * @default console
+   */
+  logger?: Logger;
 }
 
 export interface SemanticSearchOptions extends SemanticSearchConfig {
@@ -98,12 +110,16 @@ export class SemanticSearch<T = unknown> {
   private documents = new Map<string, string>(); // id -> original text
   private documentTexts = new Map<string, string>(); // original text -> id
   private config: SemanticSearchConfig;
+  protected logger: Logger;
 
   constructor(config: SemanticSearchOptions = {}) {
     this.config = {
-      deduplication: config.deduplication ?? true,
       ...config,
+      logger: config.logger ?? console,
+      deduplication: config.deduplication ?? true,
     };
+
+    this.logger = this.config.logger!;
 
     if (this.config.autoSave && !this.config.storePath) {
       throw new Error("storePath is required when autoSave is enabled");
@@ -139,7 +155,7 @@ export class SemanticSearch<T = unknown> {
     if (this.config.deduplication) {
       const existingId = this.documentTexts.get(doc.text);
       if (existingId !== undefined) {
-        console.warn(
+        this.logger.warn(
           `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`,
         );
         return;
@@ -160,7 +176,7 @@ export class SemanticSearch<T = unknown> {
       const batchSeenTexts = new Set<string>();
       filteredDocs = docs.filter((doc) => {
         if (this.documentTexts.has(doc.text) || batchSeenTexts.has(doc.text)) {
-          console.warn(
+          this.logger.warn(
             `[SemanticSearch] Duplicate content detected in batch: "${doc.id}". Skipping.`,
           );
           return false;

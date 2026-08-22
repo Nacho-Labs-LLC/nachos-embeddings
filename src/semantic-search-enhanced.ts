@@ -46,6 +46,7 @@ function resolveEnhancedConfig(
     deduplicateSimilarity: 0,
     temporalBoost: false,
     verbose: false,
+    logger: console,
   };
   return {
     ...defaults,
@@ -96,7 +97,7 @@ export class EnhancedSemanticSearch<
         }
 
         if (this.enhancedConfig.verbose) {
-          console.log(
+          this.logger.log(
             `[EnhancedSemanticSearch] Loaded ${data.length} documents from ${this.enhancedConfig.storePath}`,
           );
         }
@@ -104,7 +105,7 @@ export class EnhancedSemanticSearch<
     } catch (err) {
       if (this.enhancedConfig.verbose) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        console.warn(
+        this.logger.warn(
           `[EnhancedSemanticSearch] Failed to load from ${this.enhancedConfig.storePath}:`,
           errorMessage,
         );
@@ -131,13 +132,16 @@ export class EnhancedSemanticSearch<
         );
 
         if (this.enhancedConfig.verbose) {
-          console.log(
+          this.logger.log(
             `[EnhancedSemanticSearch] Saved ${data.length} documents to ${this.enhancedConfig.storePath}`,
           );
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error("[EnhancedSemanticSearch] Save failed:", errorMessage);
+        this.logger.error(
+          "[EnhancedSemanticSearch] Save failed:",
+          errorMessage,
+        );
       }
     });
 
@@ -174,7 +178,7 @@ export class EnhancedSemanticSearch<
     const exactDup = await this.checkExactDuplicate(doc.text);
     if (exactDup) {
       if (this.enhancedConfig.verbose) {
-        console.log(
+        this.logger.log(
           `[EnhancedSemanticSearch] Skipped exact duplicate: "${doc.id}" matches "${exactDup}"`,
         );
       }
@@ -184,7 +188,7 @@ export class EnhancedSemanticSearch<
     const fuzzyDup = await this.checkFuzzyDuplicate(doc.text);
     if (fuzzyDup) {
       if (this.enhancedConfig.verbose) {
-        console.log(
+        this.logger.log(
           `[EnhancedSemanticSearch] Skipped fuzzy duplicate: "${doc.id}" ~= "${fuzzyDup.id}" (${(fuzzyDup.similarity * 100).toFixed(1)}%)`,
         );
       }
@@ -219,7 +223,7 @@ export class EnhancedSemanticSearch<
     });
 
     if (this.enhancedConfig.verbose) {
-      console.log(
+      this.logger.log(
         `[EnhancedSemanticSearch] Chunking "${doc.id}" into ${chunks.length} parts`,
       );
     }
