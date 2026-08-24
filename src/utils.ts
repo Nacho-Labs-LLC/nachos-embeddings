@@ -14,19 +14,21 @@ export function chunkText(
 
   const sentences = text.split(/(?<=[.!?])\s+/);
 
-  if (sentences.length === 0) {
-    return [text];
-  }
-
   const chunks: string[] = [];
   let currentChunk: string[] = [];
   let currentTokens = 0;
+
+  const saveChunk = () => {
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk.join(" "));
+    }
+  };
 
   for (const sentence of sentences) {
     const sentenceTokens = estimateTokens(sentence);
 
     if (currentTokens + sentenceTokens > maxTokens && currentChunk.length > 0) {
-      chunks.push(currentChunk.join(" "));
+      saveChunk();
 
       const overlapSentences = Math.max(
         1,
@@ -43,9 +45,7 @@ export function chunkText(
     currentTokens += sentenceTokens;
   }
 
-  if (currentChunk.length > 0) {
-    chunks.push(currentChunk.join(" "));
-  }
+  saveChunk();
 
   return chunks.length > 0 ? chunks : [text];
 }
