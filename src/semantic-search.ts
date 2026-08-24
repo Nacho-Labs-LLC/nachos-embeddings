@@ -135,15 +135,32 @@ export class SemanticSearch<T = unknown> {
     }
   }
 
+  private isDuplicate(doc: Document<T>, batchSeenTexts?: Set<string>): boolean {
+    if (!this.config.deduplication) {
+      return false;
+    }
+
+    const existingId = this.documentTexts.get(doc.text);
+    if (existingId !== undefined) {
+      console.warn(
+        `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`,
+      );
+      return true;
+    }
+
+    if (batchSeenTexts?.has(doc.text)) {
+      console.warn(
+        `[SemanticSearch] Duplicate content detected in batch: "${doc.id}". Skipping.`,
+      );
+      return true;
+    }
+
+    return false;
+  }
+
   async addDocument(doc: Document<T>): Promise<void> {
-    if (this.config.deduplication) {
-      const existingId = this.documentTexts.get(doc.text);
-      if (existingId !== undefined) {
-        console.warn(
-          `[SemanticSearch] Duplicate content detected: "${doc.id}" matches "${existingId}". Skipping.`,
-        );
-        return;
-      }
+    if (this.isDuplicate(doc)) {
+      return;
     }
 
     const vector = await this.embedder.embed(doc.text);
@@ -159,10 +176,7 @@ export class SemanticSearch<T = unknown> {
     if (this.config.deduplication) {
       const batchSeenTexts = new Set<string>();
       filteredDocs = docs.filter((doc) => {
-        if (this.documentTexts.has(doc.text) || batchSeenTexts.has(doc.text)) {
-          console.warn(
-            `[SemanticSearch] Duplicate content detected in batch: "${doc.id}". Skipping.`,
-          );
+        if (this.isDuplicate(doc, batchSeenTexts)) {
           return false;
         }
         batchSeenTexts.add(doc.text);
