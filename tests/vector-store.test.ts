@@ -182,3 +182,17 @@ describe("VectorStore", () => {
     });
   });
 });
+
+describe("VectorStore additions", () => {
+  it("has() reports membership and remove() is by id", () => {
+    const store = new VectorStore();
+    store.add("a", [1, 0]);
+    expect(store.has("a")).toBe(true);
+    expect(store.remove("a")).toBe(true);
+    expect(store.has("a")).toBe(false);
+  });
+
+  it("still accepts the deprecated cacheEmbeddings option", () => {
+    expect(() => new VectorStore({ cacheEmbeddings: false })).not.toThrow();
+  });
+});
