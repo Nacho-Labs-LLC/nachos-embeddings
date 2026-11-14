@@ -60,5 +60,12 @@ export type {
 } from "./providers/types.js";
 export {
   TransformersProvider,
+  TRANSFORMERS_DEFAULT_MODEL,
+  TRANSFORMERS_DEFAULT_DIMENSION,
+  TRANSFORMERS_DTYPES,
+  resolveDefaultCacheDir,
   type TransformersProviderConfig,
+  type TransformersDtype,
+  type ResolvedTransformersConfig,
+  type CacheDirEnvironment,
 } from "./providers/transformers-provider.js";
