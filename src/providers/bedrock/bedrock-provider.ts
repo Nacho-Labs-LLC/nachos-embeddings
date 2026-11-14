@@ -1,6 +1,33 @@
 import type { EmbeddingProvider, BaseProviderConfig } from "../types.js";
 import type { BedrockModelAdapter } from "./models/types.js";
 import { resolveModelAdapter } from "./models/index.js";
+import { dependencyError } from "./dependency-error.js";
+
+/** Default Bedrock embedding model. */
+export const BEDROCK_DEFAULT_MODEL_ID = "amazon.titan-embed-text-v2:0";
+
+/** Default AWS region. */
+export const BEDROCK_DEFAULT_REGION = "us-east-1";
+
+/** Minimal structural view of the parts of the AWS SDK we use. */
+interface BedrockClientLike {
+  send(command: unknown): Promise<{ body: Uint8Array }>;
+  destroy(): void;
+}
+type BedrockClientCtor = new (
+  config: Record<string, unknown>,
+) => BedrockClientLike;
+type InvokeModelCommandCtor = new (input: {
+  modelId: string;
+  body: string;
+  contentType: string;
+  accept: string;
+}) => unknown;
+
+interface BedrockSession {
+  client: BedrockClientLike;
+  Command: InvokeModelCommandCtor;
+}
 
 export type CredentialStrategy = "default" | "profile" | "explicit" | "role";
 
@@ -51,7 +78,7 @@ function resolveConfig(config: BedrockProviderConfig): {
   adapter: BedrockModelAdapter;
   resolvedConfig: ResolvedConfig;
 } {
-  const modelId = config.modelId ?? "amazon.titan-embed-text-v2:0";
+  const modelId = config.modelId ?? BEDROCK_DEFAULT_MODEL_ID;
   const adapter = config.modelAdapter ?? resolveModelAdapter(modelId);
 
   if (config.modelOptions && adapter.validateOptions) {
@@ -69,7 +96,7 @@ function resolveRuntimeConfig(
   modelId: string,
 ): ResolvedConfig {
   return {
-    region: config.region ?? "us-east-1",
+    region: config.region ?? BEDROCK_DEFAULT_REGION,
     modelId,
     credentials: resolveCredentialsConfig(config.credentials),
     endpoint: config.endpoint,
@@ -100,11 +127,11 @@ function resolveRetryConfig(
 export class BedrockProvider implements EmbeddingProvider {
   readonly name = "bedrock";
 
-  private client: any = null;
-  private InvokeModelCommandCtor: any = null;
+  private session: BedrockSession | null = null;
   private adapter: BedrockModelAdapter;
   private resolvedConfig: ResolvedConfig;
   private initialized = false;
+  private initPromise: Promise<void> | null = null;
   private dimension: number | null = null;
 
   constructor(config: BedrockProviderConfig = {}) {
@@ -113,16 +140,22 @@ export class BedrockProvider implements EmbeddingProvider {
     this.resolvedConfig = resolvedConfig;
   }
 
-  async init(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
+  init(): Promise<void> {
+    if (this.initialized) return Promise.resolve();
+    // Memoize the in-flight init; clear it afterwards so a failure can be retried.
+    this.initPromise ??= this.load().finally(() => {
+      this.initPromise = null;
+    });
+    return this.initPromise;
+  }
 
+  private async load(): Promise<void> {
     const { BedrockRuntimeClient, InvokeModelCommand } = await this.loadSdk();
-    this.InvokeModelCommandCtor = InvokeModelCommand;
     const clientConfig = await this.createClientConfig();
-
-    this.client = new BedrockRuntimeClient(clientConfig);
+    const session: BedrockSession = {
+      client: new BedrockRuntimeClient(clientConfig),
+      Command: InvokeModelCommand,
+    };
 
     if (this.resolvedConfig.progressLogging) {
       console.log(
@@ -130,10 +163,16 @@ export class BedrockProvider implements EmbeddingProvider {
       );
     }
 
-    // Probe dimension
-    const probeVector = await this.embedSingle("dimension probe");
-    this.dimension = probeVector.length;
-
+    // Probe dimension; commit state only once it succeeds.
+    let dimension: number;
+    try {
+      dimension = (await this.embedWith(session, "dimension probe")).length;
+    } catch (error) {
+      session.client.destroy();
+      throw error;
+    }
+    this.session = session;
+    this.dimension = dimension;
     this.initialized = true;
 
     if (this.resolvedConfig.progressLogging) {
@@ -178,20 +217,43 @@ export class BedrockProvider implements EmbeddingProvider {
     return this.initialized;
   }
 
+  getModelId(): string {
+    return this.resolvedConfig.modelId;
+  }
+
+  /** Destroy the underlying AWS client. The provider can be init()ed again. */
+  async dispose(): Promise<void> {
+    if (this.initPromise) {
+      await this.initPromise.catch(() => undefined);
+    }
+    const session = this.session;
+    this.session = null;
+    this.initialized = false;
+    this.dimension = null;
+    session?.client.destroy();
+  }
+
   getConfig(): Readonly<ResolvedConfig> {
     return { ...this.resolvedConfig };
   }
 
   private async loadSdk(): Promise<{
-    BedrockRuntimeClient: any;
-    InvokeModelCommand: any;
+    BedrockRuntimeClient: BedrockClientCtor;
+    InvokeModelCommand: InvokeModelCommandCtor;
   }> {
+    const specifier = "@aws-sdk/client-bedrock-runtime";
     try {
-      return await import("@aws-sdk/client-bedrock-runtime");
-    } catch {
-      throw new Error(
-        "@aws-sdk/client-bedrock-runtime is required for BedrockProvider. " +
-          "Install it: npm install @aws-sdk/client-bedrock-runtime",
+      const sdk = await import("@aws-sdk/client-bedrock-runtime");
+      return sdk as unknown as {
+        BedrockRuntimeClient: BedrockClientCtor;
+        InvokeModelCommand: InvokeModelCommandCtor;
+      };
+    } catch (error) {
+      throw dependencyError(
+        error,
+        specifier,
+        `${specifier} is required for BedrockProvider. ` +
+          `Install it: npm install ${specifier}`,
       );
     }
   }
@@ -231,8 +293,10 @@ export class BedrockProvider implements EmbeddingProvider {
       const { fromIni } = await import("@aws-sdk/credential-provider-ini");
       const { profile } = this.resolvedConfig.credentials;
       return fromIni(profile ? { profile } : {});
-    } catch {
-      throw new Error(
+    } catch (error) {
+      throw dependencyError(
+        error,
+        "@aws-sdk/credential-provider-ini",
         "@aws-sdk/credential-provider-ini is required for profile credential strategy. " +
           "It should be available with @aws-sdk/client-bedrock-runtime.",
       );
@@ -269,9 +333,11 @@ export class BedrockProvider implements EmbeddingProvider {
           RoleSessionName: roleSessionName ?? "nachos-embeddings",
           ...(externalId !== undefined ? { ExternalId: externalId } : {}),
         },
-      } as any);
-    } catch {
-      throw new Error(
+      });
+    } catch (error) {
+      throw dependencyError(
+        error,
+        "@aws-sdk/credential-providers",
         "@aws-sdk/credential-providers is required for role credential strategy. " +
           "Install it: npm install @aws-sdk/credential-providers",
       );
@@ -279,11 +345,21 @@ export class BedrockProvider implements EmbeddingProvider {
   }
 
   private async embedSingle(text: string): Promise<number[]> {
+    if (!this.session) {
+      throw new Error("BedrockProvider not initialized. Call init() first.");
+    }
+    return this.embedWith(this.session, text);
+  }
+
+  private async embedWith(
+    session: BedrockSession,
+    text: string,
+  ): Promise<number[]> {
     const body = this.adapter.formatRequest(
       text,
       this.resolvedConfig.modelOptions,
     );
-    const responseBody = await this.invokeModel(body);
+    const responseBody = await this.invokeModel(session, body);
     return this.adapter.parseResponse(responseBody);
   }
 
@@ -319,16 +395,19 @@ export class BedrockProvider implements EmbeddingProvider {
     return results as number[][];
   }
 
-  private async invokeModel(body: string): Promise<string> {
+  private async invokeModel(
+    session: BedrockSession,
+    body: string,
+  ): Promise<string> {
     return this.invokeWithRetry(async () => {
-      const command = new this.InvokeModelCommandCtor({
+      const command = new session.Command({
         modelId: this.resolvedConfig.modelId,
         body,
         contentType: "application/json",
         accept: "application/json",
       });
 
-      const response = await this.client.send(command);
+      const response = await session.client.send(command);
       return new TextDecoder().decode(response.body);
     });
   }
