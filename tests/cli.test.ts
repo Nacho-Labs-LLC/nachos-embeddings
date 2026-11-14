@@ -18,21 +18,31 @@ function createLoader() {
   const directory = mkdtempSync(join(tmpdir(), "nachos-cli-test-"));
   temporaryPaths.push(directory);
   const loader = join(directory, "loader.mjs");
-  const transformers = `
+  const common = `
     import { appendFileSync } from "node:fs";
-    const record = (provider, options) => appendFileSync(process.env.NACHOS_CLI_TEST_LOG, JSON.stringify({ provider, options }) + "\\n");
+    const log = (entry) => appendFileSync(process.env.NACHOS_CLI_TEST_LOG, JSON.stringify(entry) + "\\n");
+  `;
+  const transformers = `${common}
     export class Embedder {
-      constructor(options) { record("transformers", options); }
+      constructor(options) { this.options = options; log({ provider: "transformers", options }); }
       async init() {}
+      getModelId() {
+        const { model = "stub-default", dtype } = this.options;
+        return dtype ? model + ":" + dtype : model;
+      }
+      async getDimension() { return 1; }
+      getConfig() { return { cacheDir: this.options.cacheDir ?? "/stub/default-cache" }; }
+      async dispose() { log({ disposed: "transformers" }); }
       async embedBatch(lines) { return lines.map((_, index) => [index + 0.25]); }
     }
   `;
-  const bedrock = `
-    import { appendFileSync } from "node:fs";
-    const record = (provider, options) => appendFileSync(process.env.NACHOS_CLI_TEST_LOG, JSON.stringify({ provider, options }) + "\\n");
+  const bedrock = `${common}
     export class BedrockProvider {
-      constructor(options) { record("bedrock", options); }
+      constructor(options) { this.options = options; log({ provider: "bedrock", options }); }
       async init() {}
+      getModelId() { return this.options.modelId ?? "stub-bedrock-default"; }
+      async getDimension() { return 2; }
+      async dispose() { log({ disposed: "bedrock" }); }
       async embedBatch(lines) { return lines.map((_, index) => [index + 0.5]); }
     }
   `;
@@ -68,12 +78,14 @@ function runCli(args: string[], input = "") {
       env: { ...process.env, NACHOS_CLI_TEST_LOG: log },
     },
   );
-  const providers = (existsSync(log) ? readFileSync(log, "utf8") : "")
+  const events = (existsSync(log) ? readFileSync(log, "utf8") : "")
     .trim()
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  return { ...result, providers };
+  const providers = events.filter((event) => event.provider);
+  const disposed = events.flatMap((event) => event.disposed ?? []);
+  return { ...result, providers, disposed };
 }
 
 afterEach(() => {
@@ -148,11 +160,121 @@ describe("nachos-embeddings CLI", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(out[0]).toEqual({ ready: true, model: "custom-model" });
+    expect(out[0]).toEqual({
+      ready: true,
+      model: "custom-model",
+      dimension: 1,
+    });
     expect(out[1]).toEqual({ id: 1, vectors: [[0.25], [1.25]] });
     expect(out[2].id).toBeNull();
     expect(out[2].error).toContain("invalid request");
     expect(out[3]).toEqual({ id: 3, vectors: [[0.25]] });
     expect(result.providers).toHaveLength(1);
+  });
+
+  it("serve reports the provider's model id, not a hardcoded default", () => {
+    const result = runCli(["serve"], "");
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      ready: true,
+      model: "stub-default",
+      dimension: 1,
+    });
+    const bedrock = runCli(["serve", "--provider", "bedrock"], "");
+    expect(JSON.parse(bedrock.stdout.trim())).toEqual({
+      ready: true,
+      model: "stub-bedrock-default",
+      dimension: 2,
+    });
+  });
+
+  it("serve includes the dtype in the reported model id", () => {
+    const result = runCli(["serve", "--dtype", "q8"], "");
+    expect(JSON.parse(result.stdout.trim()).model).toBe("stub-default:q8");
+  });
+
+  it("serve disposes the provider on stdin EOF", () => {
+    const result = runCli(["serve"], JSON.stringify({ id: 1, texts: ["a"] }));
+    expect(result.status).toBe(0);
+    expect(result.disposed).toEqual(["transformers"]);
+  });
+
+  it("embed disposes the provider after finishing", () => {
+    const result = runCli(["embed", "--stdin", "--json"], "a\n");
+    expect(result.disposed).toEqual(["transformers"]);
+  });
+
+  it("rejects an unknown provider with a usage error", () => {
+    const result = runCli(["embed", "--stdin", "--json", "--provider", "nope"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("unknown provider 'nope'");
+    expect(result.stderr).toContain("usage:");
+    expect(result.providers).toEqual([]);
+  });
+
+  it.each(["--provider", "--model", "--region", "--cache-dir", "--dtype"])(
+    "treats %s without a value as a usage error",
+    (flag) => {
+      const atEnd = runCli(["serve", flag]);
+      expect(atEnd.status).toBe(1);
+      expect(atEnd.stderr).toContain(`${flag} requires a value`);
+
+      const beforeFlag = runCli(["embed", flag, "--stdin", "--json"]);
+      expect(beforeFlag.status).toBe(1);
+      expect(beforeFlag.stderr).toContain(`${flag} requires a value`);
+      expect(beforeFlag.providers).toEqual([]);
+    },
+  );
+
+  it("forwards --cache-dir and --dtype to the transformers provider", () => {
+    const result = runCli(
+      ["serve", "--cache-dir", "/some/cache", "--dtype", "q8"],
+      "",
+    );
+    expect(result.providers).toEqual([
+      {
+        provider: "transformers",
+        options: { cacheDir: "/some/cache", dtype: "q8" },
+      },
+    ]);
+  });
+
+  it("info --json prints provider, model, dimension and cacheDir", () => {
+    const result = runCli([
+      "info",
+      "--json",
+      "--model",
+      "m",
+      "--dtype",
+      "q8",
+      "--cache-dir",
+      "/c",
+    ]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      provider: "transformers",
+      model: "m:q8",
+      dimension: 1,
+      cacheDir: "/c",
+    });
+    expect(result.disposed).toEqual(["transformers"]);
+  });
+
+  it("info prints human-readable lines without --json", () => {
+    const result = runCli(["info"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      "provider: transformers\nmodel: stub-default\ndimension: 1\ncacheDir: /stub/default-cache\n",
+    );
+  });
+
+  it("info for bedrock reports a null cacheDir", () => {
+    const result = runCli(["info", "--json", "--provider", "bedrock"]);
+    expect(JSON.parse(result.stdout)).toEqual({
+      provider: "bedrock",
+      model: "stub-bedrock-default",
+      dimension: 2,
+      cacheDir: null,
+    });
   });
 });

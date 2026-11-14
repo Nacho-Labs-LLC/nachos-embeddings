@@ -8,6 +8,7 @@ import type { EmbeddingProvider } from "./providers/types.js";
 import {
   TransformersProvider,
   type TransformersProviderConfig,
+  type ResolvedTransformersConfig,
 } from "./providers/transformers-provider.js";
 
 export type EmbedderConfig = TransformersProviderConfig;
@@ -60,7 +61,17 @@ export class Embedder implements EmbeddingProvider {
     return this.provider.isInitialized();
   }
 
-  getConfig(): Readonly<Required<EmbedderConfig>> {
+  /** Model id including any non-default dtype suffix (e.g. `model:q8`) */
+  getModelId(): string {
+    return this.provider.getModelId();
+  }
+
+  /** Release the underlying model session */
+  async dispose(): Promise<void> {
+    return this.provider.dispose();
+  }
+
+  getConfig(): Readonly<ResolvedTransformersConfig> {
     return this.provider.getConfig();
   }
 }
