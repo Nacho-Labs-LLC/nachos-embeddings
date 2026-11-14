@@ -1,3 +1,5 @@
+import { DEFAULT_CHUNK_OVERLAP, DEFAULT_MAX_CHUNK_TOKENS } from "./defaults.js";
+
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -9,8 +11,8 @@ export function chunkText(
     overlapTokens?: number;
   },
 ): string[] {
-  const maxTokens = options?.maxTokens ?? 500;
-  const overlapTokens = options?.overlapTokens ?? 50;
+  const maxTokens = options?.maxTokens ?? DEFAULT_MAX_CHUNK_TOKENS;
+  const overlapTokens = options?.overlapTokens ?? DEFAULT_CHUNK_OVERLAP;
 
   const sentences = text.split(/(?<=[.!?])\s+/);
 

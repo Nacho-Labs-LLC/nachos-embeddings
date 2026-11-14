@@ -1,207 +1,126 @@
 # @nacho-labs/nachos-embeddings
 
-Local, privacy-first vector embeddings and semantic search with a modular provider architecture. Runs locally using [Transformers.js](https://huggingface.co/docs/transformers.js) by default, or connect to [AWS Bedrock](https://aws.amazon.com/bedrock/) for cloud-scale embedding models.
+Vector embeddings and semantic search for Node.js. Embeds locally with [Transformers.js](https://huggingface.co/docs/transformers.js) by default (no API key, no network after the first model download), or through AWS Bedrock or your own provider. Includes an in-memory vector store, safe JSON persistence, and a small CLI for non-JS callers.
 
-## Prerequisites
-
-- **Node.js 20.9+** (uses ESM and top-level await; required by the Sharp dependency)
-- **Internet connection on first run** to download the embedding model (~25MB, cached permanently after that)
-- **For Bedrock**: AWS account with Bedrock model access enabled
-
-## Features
-
-- **Local embeddings** — No API calls, no costs, no rate limits (default)
-- **AWS Bedrock support** — Amazon Titan V2, Cohere Embed v3, or bring your own model adapter
-- **Modular providers** — Swap embedding backends without changing application code
-- **Semantic search** — Find similar text even with different wording
-- **Privacy-first** — Local provider keeps data on your machine
-- **Lightweight** — ~25MB model download for local, then runs offline
-- **Fast** — In-memory vector index with cosine similarity
-- **Standalone** — Zero framework dependencies, use anywhere
-
-## Installation
+## Install
 
 ```bash
 npm install @nacho-labs/nachos-embeddings
 ```
 
-## Quick start
+- Node.js >= 20.9, **ESM only** (`import`, not `require`).
+- The default model (`Xenova/all-MiniLM-L6-v2`, 384 dimensions, ~90MB on disk) is downloaded on first use, then cached.
+- Bedrock is optional: install `@aws-sdk/client-bedrock-runtime` (plus `@aws-sdk/credential-provider-ini` for the `profile` strategy and `@aws-sdk/credential-providers` for `role`) only if you use it.
 
-### Semantic search
+## Quick start
 
 ```typescript
 import { SemanticSearch } from "@nacho-labs/nachos-embeddings";
 
 const search = new SemanticSearch();
-await search.init(); // Downloads model on first run (~25MB)
+await search.init(); // loads the model (downloads it on first run)
 
-// Add documents
 await search.addDocument({
   id: "pref-1",
   text: "User loves breakfast tacos",
   metadata: { kind: "preference" },
 });
 
-await search.addDocument({
-  id: "pref-2",
-  text: "User dislikes mushrooms",
-  metadata: { kind: "preference" },
+const results = await search.search("What does the user eat in the morning?", {
+  limit: 5,
+  filter: (meta) => meta?.kind === "preference",
 });
-
-// Semantic search — finds results even with different wording
-const results = await search.search("What does user like for morning meals?");
-// [{ id: 'pref-1', similarity: 0.87, text: 'User loves breakfast tacos', metadata: { kind: 'preference' } }]
+// [{ id: "pref-1", similarity: <score>, text: "User loves breakfast tacos", metadata: {...} }]
 ```
 
-### Low-level API
+`init()` must be called before any other method. Search is silent by default; see `logger` and `verbose` below.
 
-For more control, use `Embedder` and `VectorStore` directly:
+## SemanticSearch
 
-```typescript
-import { Embedder, VectorStore } from "@nacho-labs/nachos-embeddings";
+`new SemanticSearch<Metadata>(options?)`. All options are optional.
 
-const embedder = new Embedder();
-await embedder.init();
+| Option            | Default                   | Description                                                                                                                                                                                                                    |
+| ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `provider`        | local Transformers        | Any `EmbeddingProvider`. Overrides `model`, `cacheDir`, `dtype`, `progressLogging`.                                                                                                                                            |
+| `model`           | `Xenova/all-MiniLM-L6-v2` | Transformers.js model id (default provider only).                                                                                                                                                                              |
+| `cacheDir`        | per-user dir              | Model cache directory (see [Transformers](#transformers-default)).                                                                                                                                                             |
+| `progressLogging` | `false`                   | Log model download progress.                                                                                                                                                                                                   |
+| `minSimilarity`   | `0.4`                     | Minimum cosine similarity (0-1) for a result. Overridable per search.                                                                                                                                                          |
+| `deduplicate`     | `"exact"`                 | `"off"`, `"exact"` (identical text), `"normalized"` (case and whitespace-insensitive), or `{ similarity: 0.95 }` (also skips near-duplicates by embedding cosine similarity). Not applied to pieces of auto-chunked documents. |
+| `autoChunk`       | `false`                   | Split long documents into overlapping chunks with ids `<id>#chunk<n>` and metadata `chunkIndex` / `parentId`. Removing the parent removes its chunks.                                                                          |
+| `maxChunkTokens`  | `500`                     | Chunk size in estimated tokens (about 4 characters each).                                                                                                                                                                      |
+| `chunkOverlap`    | `50`                      | Overlap between chunks, in estimated tokens.                                                                                                                                                                                   |
+| `temporalBoost`   | `false`                   | Stamp new documents with `metadata.timestamp` and re-rank results toward recent ones (70% similarity, 30% recency). Per-search override. The boost is applied before `limit`.                                                  |
+| `storePath`       | none                      | JSON store file used by `persist()`, `autoSave` and `loadOnInit`.                                                                                                                                                              |
+| `autoSave`        | `false`                   | Write the store after every mutation. Requires `storePath` (the constructor throws otherwise).                                                                                                                                 |
+| `loadOnInit`      | `true`                    | Load `storePath` during `init()`, and before the first write if `init()` was skipped.                                                                                                                                          |
+| `onCorruptStore`  | `"throw"`                 | `"throw"` rejects with `StoreCorruptError`; `"quarantine"` renames the file to `<file>.corrupt-<timestamp>` and starts empty.                                                                                                  |
+| `logger`          | silent                    | `{ debug, info, warn, error }` (each optional).                                                                                                                                                                                |
+| `verbose`         | `false`                   | When no `logger` is given, log to the console.                                                                                                                                                                                 |
+| `onError`         | none                      | Called when an `autoSave` write fails.                                                                                                                                                                                         |
 
-// Generate embeddings
-const vec1 = await embedder.embed("Hello world");
-const vec2 = await embedder.embed("Hi there");
-console.log(vec1.length); // 384 (vector dimensions)
+Deprecated option aliases still work: `deduplication` (boolean), `deduplicateExact` (`true` = `"normalized"`), `deduplicateSimilarity` (n = `{ similarity: n }`), and `cacheEmbeddings` (no effect). `deduplicate` wins when both are set.
 
-// Store and search vectors
-const store = new VectorStore();
-store.add("doc1", vec1, { content: "Hello world" });
-store.add("doc2", vec2, { content: "Hi there" });
+`SearchOptions`: `limit` (default 10), `minSimilarity`, `filter(metadata)`, `temporalBoost`.
 
-const queryVec = await embedder.embed("Greetings");
-const results = store.search(queryVec, { limit: 5 });
-// [{ id: 'doc2', similarity: 0.92, metadata: { content: 'Hi there' } }, ...]
-```
+| Method                      | Description                                                        |
+| --------------------------- | ------------------------------------------------------------------ |
+| `init()`                    | Initialize the provider and load the store if `storePath` is set.  |
+| `addDocument(doc)`          | Add `{ id, text, metadata? }`. An existing id is replaced.         |
+| `addDocuments(docs)`        | Batch add; one embedding call for the batch.                       |
+| `search(query, opts?)`      | Results `{ id, similarity, text, metadata }`, best first.          |
+| `remove(id)`                | Remove a document (and its chunks). Resolves `true` if it existed. |
+| `clear()`                   | Remove everything.                                                 |
+| `size()`                    | Number of indexed entries (chunks count individually).             |
+| `getDocument(id)`           | `{ id, text, metadata }` without the vector, or `undefined`.       |
+| `listDocuments()`           | `{ id, metadata }` for every entry; no text, no vectors.           |
+| `export()` / `import(data)` | Documents with vectors as plain data.                              |
+| `load()`                    | Read `storePath` into memory (existing in-memory documents win).   |
+| `persist()`                 | Write `storePath` now. Rejects if the write fails.                 |
+| `getConfig()`               | Resolved options (defaults applied).                               |
+| `isInitialized()`           | Whether the provider is ready.                                     |
 
-## Configuration
+Mutations are serialized, so concurrent `addDocument` calls dedupe correctly.
 
-### Model selection
+### Persistence
+
+- Writes are atomic: a temp file in the same directory is fsynced and renamed over the store, so a crash or failed write leaves the previous file intact. Writes go through one coalescing queue; the file always reflects the latest state.
+- A missing store file is an empty store.
+- A store that exists but is not valid (bad JSON, not an array, malformed entries) makes `init()`/`load()` reject with `StoreCorruptError` (`error.path` is the file), and it is **never overwritten**. Set `onCorruptStore: "quarantine"` to move it aside and start fresh.
+- `autoSave` failures go to `onError` and `logger.error`, and are rethrown once by the next `persist()`.
+- Vectors are tied to the model that produced them. After changing model, dtype or provider, re-index.
 
 ```typescript
 const search = new SemanticSearch({
-  model: "Xenova/all-MiniLM-L6-v2", // Default — fast, 384 dimensions
-  // model: 'Xenova/all-mpnet-base-v2',  // Higher quality, slower
-  cacheDir: ".cache/transformers",
-  progressLogging: true,
-});
-```
-
-### Auto-persistence (NEW in v0.3.0)
-
-Automatically save the index to disk after every write operation:
-
-```typescript
-const search = new SemanticSearch({
+  storePath: "./index.json",
   autoSave: true,
-  storePath: ".semantic-store.json",
+  onCorruptStore: "quarantine",
+  logger: { warn: (m) => console.warn(m) },
 });
-
 await search.init();
-
-// Index automatically persists after every add/remove
-await search.addDocument({ id: "1", text: "foo" }); // Saves to disk
-await search.remove("1"); // Saves to disk
-
-// On startup, load the saved index:
-import { readFile } from "fs/promises";
-import { existsSync } from "fs";
-
-if (existsSync(".semantic-store.json")) {
-  const data = JSON.parse(await readFile(".semantic-store.json", "utf-8"));
-  search.import(data);
-}
 ```
 
-**Or manually control persistence:**
+## Providers
+
+### Transformers (default)
+
+`Embedder` (a thin wrapper) and `TransformersProvider` run models locally.
 
 ```typescript
-const search = new SemanticSearch({
-  storePath: ".semantic-store.json",
-  // autoSave: false (default)
-});
+import { Embedder } from "@nacho-labs/nachos-embeddings";
 
-// ... add documents ...
-
-// Save manually when ready
-await search.persist();
+const embedder = new Embedder({ dtype: "q8" });
+await embedder.init();
+const vec = await embedder.embed("hello"); // number[384]
 ```
 
-### Deduplication (NEW in v0.3.0)
+Options: `model`, `cacheDir`, `dtype`, `progressLogging`. Methods: `init()`, `embed()`, `embedBatch()`, `getDimension()`, `getModelId()`, `getConfig()`, `isInitialized()`, `dispose()`.
 
-Prevent duplicate content with different IDs:
+**Cache directory**, first match wins: `cacheDir` option (CLI `--cache-dir`), `$NACHOS_EMBEDDINGS_CACHE`, `$XDG_CACHE_HOME/nachos-embeddings`, `~/.cache/nachos-embeddings`. On Windows: `%LOCALAPPDATA%\nachos-embeddings`. `resolveDefaultCacheDir()` returns the result.
 
-```typescript
-const search = new SemanticSearch({
-  deduplication: true, // Default: true
-});
-
-await search.addDocument({ id: "1", text: "foo" });
-await search.addDocument({ id: "2", text: "foo" }); // ⚠️  Warns and skips
-
-// Check console:
-// [SemanticSearch] Duplicate content detected: "2" matches "1". Skipping.
-```
-
-Disable if you intentionally want duplicate content:
-
-```typescript
-const search = new SemanticSearch({
-  deduplication: false,
-});
-```
-
-### Similarity threshold
-
-```typescript
-const search = new SemanticSearch({
-  minSimilarity: 0.4, // Default (range: 0-1)
-});
-
-// Or override per search
-const results = await search.search("query", {
-  minSimilarity: 0.8,
-  limit: 10,
-});
-```
-
-### Metadata filtering
-
-Filter search results by metadata fields:
-
-```typescript
-const results = await search.search("query", {
-  filter: (metadata) => metadata?.kind === "preference",
-});
-
-// Combine multiple filters
-const results = await search.search("auth patterns", {
-  filter: (meta) =>
-    meta?.kind === "decision" &&
-    meta?.date > "2026-01-01" &&
-    meta?.tags?.includes("security"),
-});
-```
-
-## Provider system
-
-nachos-embeddings uses a modular provider architecture. The default `Embedder` uses local Transformers.js, but you can swap in any provider that implements the `EmbeddingProvider` interface.
+**dtype**: `auto`, `fp32`, `fp16`, `q8`, `int8`, `uint8`, `q4`, `bnb4`, `q4f16` (`TRANSFORMERS_DTYPES`). Unset uses the library default (fp32). In this release's benchmark, `q8` embedded batches about 3x faster than fp32, with cosine similarity of about 0.99 to the fp32 vectors. A non-default dtype is appended to the model id (`Xenova/all-MiniLM-L6-v2:q8`) and vectors differ from fp32, so do not mix them in one index.
 
 ### AWS Bedrock
-
-Use Amazon Titan, Cohere Embed, or other Bedrock-hosted embedding models.
-
-**Install the AWS SDK** (optional peer dependency — only needed if using Bedrock):
-
-```bash
-npm install @aws-sdk/client-bedrock-runtime
-```
-
-**Quick start:**
 
 ```typescript
 import { SemanticSearch } from "@nacho-labs/nachos-embeddings";
@@ -209,569 +128,149 @@ import { BedrockProvider } from "@nacho-labs/nachos-embeddings/bedrock";
 
 const search = new SemanticSearch({
   provider: new BedrockProvider({
-    region: "us-east-1",
-    modelId: "amazon.titan-embed-text-v2:0",
+    region: "us-east-1", // default
+    modelId: "amazon.titan-embed-text-v2:0", // default
+    modelOptions: { dimensions: 512 },
   }),
 });
-
 await search.init();
-await search.addDocument({ id: "doc1", text: "Hello world" });
-const results = await search.search("greetings");
 ```
 
-**Supported models:**
+| Model ID                       | Dimensions               | `modelOptions`                                                      |
+| ------------------------------ | ------------------------ | ------------------------------------------------------------------- |
+| `amazon.titan-embed-text-v2:0` | 256, 512, 1024 (default) | `dimensions`, `normalize` (default `true`)                          |
+| `cohere.embed-english-v3`      | 1024                     | `inputType` (default `search_document`), `truncate` (default `END`) |
+| `cohere.embed-multilingual-v3` | 1024                     | same as above                                                       |
 
-| Model ID                       | Dimensions        | Notes                             |
-| ------------------------------ | ----------------- | --------------------------------- |
-| `amazon.titan-embed-text-v2:0` | 256, 512, or 1024 | Default. Configurable dimensions. |
-| `cohere.embed-english-v3`      | 1024              | English-optimized                 |
-| `cohere.embed-multilingual-v3` | 1024              | 100+ languages                    |
+Other `BedrockProvider` options: `endpoint` (e.g. a VPC endpoint), `batchSize` (25), `maxConcurrency` (5), `timeout` in ms (30000), `retry: { maxAttempts: 3, backoffMs: 200 }` (backoff doubles per retry), `progressLogging`.
 
-**Model options:**
+**Credentials** (`credentials.strategy`): `default` (AWS SDK chain: env, shared config, instance profile), `profile` (`profile`), `explicit` (`accessKeyId`, `secretAccessKey`, optional `sessionToken`), `role` (`roleArn`, optional `roleSessionName`, `externalId`).
 
-```typescript
-// Titan V2 — configurable dimensions and normalization
-new BedrockProvider({
-  modelId: "amazon.titan-embed-text-v2:0",
-  modelOptions: {
-    dimensions: 256, // 256, 512, or 1024 (default: 1024)
-    normalize: true, // default: true
-  },
-});
+`getConfig()` redacts `secretAccessKey` and `sessionToken` as `"[redacted]"` and returns copies, so it is safe to log.
 
-// Cohere — configurable input type for search optimization
-new BedrockProvider({
-  modelId: "cohere.embed-english-v3",
-  modelOptions: {
-    inputType: "search_document", // 'search_document' | 'search_query' | 'classification' | 'clustering'
-    truncate: "END", // 'NONE' | 'START' | 'END'
-  },
-});
-```
-
-### Credential strategies
-
-```typescript
-// Default — uses AWS SDK credential chain (env vars, ~/.aws/credentials, instance profile)
-new BedrockProvider({ credentials: { strategy: "default" } });
-
-// Named profile
-new BedrockProvider({
-  credentials: { strategy: "profile", profile: "my-profile" },
-});
-
-// Explicit keys
-new BedrockProvider({
-  credentials: {
-    strategy: "explicit",
-    accessKeyId: "AKID...",
-    secretAccessKey: "SECRET...",
-    sessionToken: "TOKEN...", // optional
-  },
-});
-
-// Assume IAM role
-new BedrockProvider({
-  credentials: {
-    strategy: "role",
-    roleArn: "arn:aws:iam::123456789:role/bedrock-access",
-    roleSessionName: "nachos", // optional
-    externalId: "ext-id", // optional
-  },
-});
-```
-
-### Advanced Bedrock configuration
-
-```typescript
-new BedrockProvider({
-  region: "us-west-2",
-  modelId: "amazon.titan-embed-text-v2:0",
-  endpoint: "https://vpce-xxx.bedrock-runtime.us-west-2.vpce.amazonaws.com", // VPC endpoint
-  batchSize: 25, // texts per batch chunk (default: 25)
-  maxConcurrency: 5, // parallel API calls within a batch (default: 5)
-  timeout: 30000, // request timeout in ms (default: 30000)
-  retry: {
-    maxAttempts: 3, // retry count for transient errors (default: 3)
-    backoffMs: 200, // base backoff, doubles per retry (default: 200)
-  },
-  progressLogging: true, // log init/dimension detection
-});
-```
-
-### Custom model adapters
-
-For Bedrock models not built-in, implement `BedrockModelAdapter`:
-
-```typescript
-import { BedrockProvider } from "@nacho-labs/nachos-embeddings/bedrock";
-import type { BedrockModelAdapter } from "@nacho-labs/nachos-embeddings/bedrock";
-
-const myAdapter: BedrockModelAdapter = {
-  modelName: "My Custom Model",
-  defaultDimension: 768,
-  formatRequest(text, options) {
-    return JSON.stringify({ input: text, ...options });
-  },
-  parseResponse(body) {
-    return JSON.parse(body).vector;
-  },
-};
-
-const provider = new BedrockProvider({
-  modelId: "my-company.custom-embed-v1",
-  modelAdapter: myAdapter,
-});
-```
-
-### Switching providers
-
-When switching between providers, note that **different models produce different vector dimensions** (e.g., Transformers.js default = 384d, Titan V2 = 1024d). Existing persisted vectors are incompatible with a different dimension — you must re-index your documents after switching.
-
-## Persistence
-
-Export and import for saving to disk:
-
-```typescript
-import { readFile, writeFile } from "node:fs/promises";
-
-// Export
-const data = search.export();
-await writeFile("embeddings.json", JSON.stringify(data));
-
-// Import
-const saved = JSON.parse(await readFile("embeddings.json", "utf-8"));
-search.import(saved);
-```
-
-## Using with Claude Code
-
-Give Claude Code semantic memory over your project — decisions, patterns, and
-context that persists across sessions and gets recalled by meaning, not keywords.
-
-### Why this matters
-
-Claude Code can read files, but it doesn't _remember_ what you discussed
-yesterday or _know_ which files are most relevant to your current question.
-nachos-embeddings adds a local semantic search layer through
-[MCP](https://modelcontextprotocol.io) (Model Context Protocol):
-
-- **Semantic recall** — "How do we handle auth?" finds your auth docs even if
-  no file is literally named "auth"
-- **Project memory** — Index decisions, patterns, and context that survive
-  across sessions
-- **Zero token spend** — Search happens locally, not in the LLM context window
-
-### 1. Create the MCP server
-
-```bash
-mkdir my-semantic-search && cd my-semantic-search
-npm init -y
-npm install @nacho-labs/nachos-embeddings @modelcontextprotocol/sdk zod tsx
-```
-
-Create `server.ts`:
+**Custom model adapter** for other Bedrock models:
 
 ```typescript
 import {
-  McpServer,
-  StdioServerTransport,
-} from "@modelcontextprotocol/sdk/server/index.js";
-import { z } from "zod";
-import { SemanticSearch } from "@nacho-labs/nachos-embeddings";
-import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+  BedrockProvider,
+  type BedrockModelAdapter,
+} from "@nacho-labs/nachos-embeddings/bedrock";
 
-const STORE_PATH = ".semantic-store.json";
-
-// Initialize search engine
-const search = new SemanticSearch({ minSimilarity: 0.6 });
-
-try {
-  await search.init();
-} catch (err) {
-  console.error(
-    "Failed to load embedding model. Is this the first run? An internet connection is required to download the model (~25MB).",
-    err,
-  );
-  process.exit(1);
-}
-
-// Load persisted index if it exists
-if (existsSync(STORE_PATH)) {
-  const data = JSON.parse(await readFile(STORE_PATH, "utf-8"));
-  search.import(data);
-}
-
-async function persist() {
-  await writeFile(STORE_PATH, JSON.stringify(search.export()));
-}
-
-// Create MCP server
-const server = new McpServer(
-  { name: "semantic-search", version: "1.0.0" },
-  { capabilities: { logging: {} } },
-);
-
-// Tool: Search for semantically similar content
-server.registerTool(
-  "semantic_search",
-  {
-    title: "Semantic Search",
-    description:
-      "Search indexed documents by meaning. Use this to find relevant context, past decisions, code patterns, or any previously indexed content.",
-    inputSchema: z.object({
-      query: z.string().describe("Natural language search query"),
-      limit: z.number().optional().default(5).describe("Max results to return"),
-    }),
-  },
-  async ({ query, limit }) => {
-    const results = await search.search(query, { limit });
-    if (results.length === 0) {
-      return {
-        content: [{ type: "text", text: "No relevant results found." }],
-      };
-    }
-    const formatted = results
-      .map(
-        (r, i) =>
-          `${i + 1}. [${(r.similarity * 100).toFixed(0)}%] ${r.text}${r.metadata ? `\n   metadata: ${JSON.stringify(r.metadata)}` : ""}`,
-      )
-      .join("\n\n");
-    return { content: [{ type: "text", text: formatted }] };
-  },
-);
-
-// Tool: Add a document to the index
-server.registerTool(
-  "semantic_index",
-  {
-    title: "Index Document",
-    description:
-      "Add a document to the semantic search index. Use this to remember decisions, patterns, file summaries, or any context worth recalling later.",
-    inputSchema: z.object({
-      id: z.string().describe("Unique document ID"),
-      text: z.string().describe("The text content to index"),
-      metadata: z
-        .record(z.string())
-        .optional()
-        .describe("Optional key-value metadata"),
-    }),
-  },
-  async ({ id, text, metadata }) => {
-    await search.addDocument({ id, text, metadata });
-    await persist();
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Indexed "${id}" (${search.size()} total documents)`,
-        },
-      ],
-    };
-  },
-);
-
-// Tool: Remove a document
-server.registerTool(
-  "semantic_remove",
-  {
-    title: "Remove Document",
-    description: "Remove a document from the semantic search index by ID.",
-    inputSchema: z.object({
-      id: z.string().describe("Document ID to remove"),
-    }),
-  },
-  async ({ id }) => {
-    const removed = search.remove(id);
-    if (removed) await persist();
-    return {
-      content: [
-        {
-          type: "text",
-          text: removed ? `Removed "${id}"` : `"${id}" not found`,
-        },
-      ],
-    };
-  },
-);
-
-// Tool: Get index stats
-server.registerTool(
-  "semantic_stats",
-  {
-    title: "Index Stats",
-    description:
-      "Get the number of documents currently in the semantic search index.",
-    inputSchema: z.object({}),
-  },
-  async () => ({
-    content: [{ type: "text", text: `${search.size()} documents indexed` }],
-  }),
-);
-
-// Start
-const transport = new StdioServerTransport();
-await server.connect(transport);
+const adapter: BedrockModelAdapter = {
+  modelName: "My Model",
+  defaultDimension: 768,
+  formatRequest: (text, options) => JSON.stringify({ input: text, ...options }),
+  parseResponse: (body) => JSON.parse(body).vector,
+  // validateOptions?(options) { ... }  // optional, throw on invalid
+};
+new BedrockProvider({ modelId: "acme.custom-embed-v1", modelAdapter: adapter });
 ```
 
-### 2. Register with Claude Code
+### Custom provider
+
+Implement `EmbeddingProvider` (exported from the package root and `@nacho-labs/nachos-embeddings/providers`):
+
+```typescript
+interface EmbeddingProvider {
+  readonly name: string;
+  init(): Promise<void>;
+  embed(text: string): Promise<number[]>;
+  embedBatch(texts: string[]): Promise<number[][]>;
+  getDimension(): Promise<number | null>;
+  isInitialized(): boolean;
+  getModelId?(): string; // optional: actual model id, e.g. to detect re-embed needs
+  dispose?(): Promise<void>; // optional: release sessions / clients
+}
+```
+
+`init()` may be called more than once and concurrently; the built-in providers memoize it and allow retry after a failure.
+
+## VectorStore and utilities
+
+```typescript
+import { VectorStore } from "@nacho-labs/nachos-embeddings";
+
+const store = new VectorStore({ minSimilarity: 0.4, defaultLimit: 10 });
+store.add("a", vecA, { any: "metadata" });
+store.search(queryVec, { limit: 5, filter: (m) => true });
+```
+
+Methods: `add`, `get`, `has`, `remove`, `clear`, `size`, `keys`, `export`, `import`, `search`. Utilities: `cosineSimilarity(a, b)`, `normalizeVector(v)`, `chunkText(text, { maxTokens, overlapTokens })`, `estimateTokens(text)`, `normalizeText(text)`. Defaults are exported from the root too: `TRANSFORMERS_DEFAULT_MODEL`, `TRANSFORMERS_DEFAULT_DIMENSION`, `TRANSFORMERS_DTYPES`, `resolveDefaultCacheDir`; and from `/bedrock`: `BEDROCK_DEFAULT_MODEL_ID`, `BEDROCK_DEFAULT_REGION`.
+
+The in-memory store suits tens of thousands of vectors at most; beyond that use a dedicated vector database.
+
+## CLI
+
+For callers that are not JavaScript. All diagnostics go to stderr; stdout carries only data.
 
 ```bash
-claude mcp add --transport stdio semantic-search -- npx tsx /absolute/path/to/server.ts
+npx nachos-embeddings embed --stdin --json < texts.txt   # one text per line in, one JSON vector per line out
+npx nachos-embeddings serve                              # persistent JSON-lines server
+npx nachos-embeddings info [--json]                      # provider, model, dimension, cache dir
 ```
 
-Or add to your project's `.mcp.json`:
+| Flag                | Applies to   | Description                                                                          |
+| ------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| `--stdin`, `--json` | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output. |
+| `--provider <name>` | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.               |
+| `--model <id>`      | all          | Transformers model name, or Bedrock model id.                                        |
+| `--region <region>` | bedrock      | AWS region (default `us-east-1`).                                                    |
+| `--cache-dir <dir>` | transformers | Model cache directory (default: per-user, see above).                                |
+| `--dtype <type>`    | transformers | Precision, e.g. `q8`. Appended to the reported model id.                             |
+
+**`serve`** loads the provider once, then handles one request per stdin line, sequentially and in order. First stdout line:
 
 ```json
-{
-  "mcpServers": {
-    "semantic-search": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["tsx", "/absolute/path/to/server.ts"]
-    }
-  }
-}
+{ "ready": true, "model": "Xenova/all-MiniLM-L6-v2", "dimension": 384 }
 ```
-
-### 3. Use it
-
-Once registered, Claude Code gains four new tools:
-
-| Tool              | What it does                     |
-| ----------------- | -------------------------------- |
-| `semantic_search` | Find relevant content by meaning |
-| `semantic_index`  | Add content to the index         |
-| `semantic_remove` | Remove content by ID             |
-| `semantic_stats`  | Check index size                 |
-
-Claude Code will use these automatically when relevant. You can also prompt it:
 
 ```text
-> Search my indexed context for how we handle authentication
-> Index this decision: we chose JWT over sessions because...
-> What do we know about the database schema?
+> {"id": 1, "texts": ["hello", "world"]}
+< {"id": 1, "vectors": [[0.01, ...], [0.02, ...]]}
+> not json
+< {"id": null, "error": "invalid request: expected {id, texts: [...]}"}
 ```
 
-### What to index
+A malformed line, or a request without a `texts` array, gets an error reply (with `id: null` when the id cannot be read) and the server keeps running. An embedding failure replies `{"id": n, "error": "<message>"}`. Blank lines are ignored. On stdin EOF the provider is disposed and the process exits 0. If the reader closes stdout early (EPIPE, e.g. `serve | head -1`), the process disposes and exits 0.
 
-The power comes from what you put in. High-value patterns:
+**`info`** prints `provider`, `model`, `dimension` and `cacheDir` as `key: value` lines, or one JSON object with `--json` (`cacheDir` is `null` for Bedrock).
 
-**Architecture decisions** — "ADR-012: We separated embeddings into a standalone
-repo to prove they're a market differentiator."
+**Exit codes:** `0` success, `1` usage error (unknown subcommand/provider, missing flag value, missing `--stdin --json`), `2` provider init or embedding failure.
 
-**File summaries** — "gateway.ts: Main entry point. Initializes NATS, loads the
-policy engine, sets up routing, manages context via ContextManager."
+## Using with Claude Code and MCP
 
-**Conventions** — "All containers use node:22-alpine, non-root user, read-only
-filesystem, dropped capabilities."
+[`@nacho-labs/mcp-semantic-search`](https://github.com/Nacho-Labs-LLC/mcp-semantic-search) is a ready-made MCP server built on this package. It gives Claude Code, Cursor and other MCP clients persistent semantic memory. To build your own, import `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js` and `StdioServerTransport` from `@modelcontextprotocol/sdk/server/stdio.js`, and use `SemanticSearch` with `storePath` and `autoSave`.
 
-**Debugging insights** — "NATS timeouts are usually the bus container not being
-ready. Check docker compose health checks first."
+## Migrating from 0.5.x
 
-### How it works
+- **`EnhancedSemanticSearch` is deprecated.** `SemanticSearch` now has every feature, and the alias keeps working. Option mapping:
 
-```text
-You ask: "How do we handle rate limiting?"
-         |
-Claude Code calls: semantic_search("rate limiting")
-         |
-nachos-embeddings converts query to a 384-dimension vector
-         |
-Cosine similarity search against all indexed vectors
-         |
-Returns: "We throttle API requests using sliding windows..."
-         (matched by meaning, not keywords)
-```
+  | 0.5.x (`EnhancedSemanticSearch`) | 0.6.0 (`SemanticSearch`)                                                        |
+  | -------------------------------- | ------------------------------------------------------------------------------- |
+  | `deduplication: false`           | `deduplicate: "off"`                                                            |
+  | `deduplicateExact: true`         | `deduplicate: "normalized"`                                                     |
+  | `deduplicateSimilarity: 0.9`     | `deduplicate: { similarity: 0.9 }`                                              |
+  | `forceSave()`                    | `persist()`                                                                     |
+  | `autoSave` without `storePath`   | set `storePath` explicitly (the alias still defaults to `.semantic-store.json`) |
 
-The model understands meaning, not just keywords:
+  Unchanged names: `autoSave`, `storePath`, `autoChunk`, `maxChunkTokens`, `chunkOverlap`, `temporalBoost`, `verbose`. Note `SemanticSearch` defaults to `deduplicate: "exact"`; the alias defaults to `"normalized"`.
 
-| Query                    | Finds                                             |
-| ------------------------ | ------------------------------------------------- |
-| "rate limiting"          | "We throttle API requests using sliding windows"  |
-| "how to deploy"          | "Production runs via docker compose up with..."   |
-| "error handling pattern" | "We use Result types instead of try/catch for..." |
+- **Model cache moved.** It was `.cache/transformers` relative to the working directory; it is now per-user (see [Transformers](#transformers-default)). The first run re-downloads the ~90MB model. To keep the old copy, set `NACHOS_EMBEDDINGS_CACHE` to the old `.cache/transformers` path, or move that directory to the new location.
+- **Corrupt stores now throw.** `init()`/`load()` reject with `StoreCorruptError` instead of being treated as empty and overwritten. Use `onCorruptStore: "quarantine"` for the old forgiving behaviour. A base `SemanticSearch` with `storePath` now also loads it on `init()`.
+- **Silent by default.** The library no longer writes to the console. Pass `logger` or `verbose: true`.
+- **`BedrockProvider.getConfig()`** returns `"[redacted]"` for `secretAccessKey` and `sessionToken`, and copies rather than internal objects.
+- Temporal boost is now applied before `limit`, so results can change order for `temporalBoost` users.
 
-## Use cases
-
-- **Give your chatbot memory across sessions** — Index facts, preferences, and decisions for semantic recall
-- **Search documents by meaning** — Find relevant content even when the wording is completely different
-- **Match user questions to known answers** — Build FAQ systems without keyword engineering
-- **Detect near-duplicate content** — Find semantically similar text for deduplication
-- **Build "more like this" features** — Recommend similar items based on text similarity
-
-## Performance
-
-| Operation               | Time (approx) |
-| ----------------------- | ------------- |
-| Model init (first time) | ~2-5 seconds  |
-| Model init (cached)     | ~500ms        |
-| Embed single text       | ~10-50ms      |
-| Embed batch (100 texts) | ~500ms-2s     |
-| Search 1000 vectors     | ~5-10ms       |
-
-**Memory:**
-
-- Model: ~100MB (loaded once, reused)
-- Each vector: ~1.5KB (384 floats)
-- 1000 documents: ~1.5MB vectors + original text
-
-The in-memory store works well up to ~10K documents. Beyond that, consider a
-dedicated vector database like [Qdrant](https://qdrant.tech) or
-[Milvus](https://milvus.io).
-
-## Comparison
-
-| Feature | Local (default) | Bedrock                      | OpenAI            |
-| ------- | --------------- | ---------------------------- | ----------------- |
-| Cost    | Free            | ~$0.0001/1k tokens           | ~$0.0001/1k chars |
-| Setup   | `npm install`   | + AWS credentials            | API key           |
-| Privacy | 100% local      | AWS account                  | Cloud             |
-| Offline | Yes             | No                           | No                |
-| Quality | Good (MiniLM)   | Excellent (Titan V2, Cohere) | Excellent         |
-
-## API reference
-
-### SemanticSearch
-
-High-level API combining embedder and vector store.
-
-| Method                        | Description                                                                                  |
-| ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `new SemanticSearch(config?)` | Create instance. Config: `provider`, `model`, `minSimilarity`, `cacheDir`, `progressLogging` |
-| `init()`                      | Load the embedding model. **Must be called before any other method.**                        |
-| `addDocument(doc)`            | Add `{ id, text, metadata? }` to the index                                                   |
-| `addDocuments(docs)`          | Batch add (more efficient for multiple documents)                                            |
-| `search(query, opts?)`        | Search by meaning. Options: `limit`, `minSimilarity`, `filter`                               |
-| `remove(id)`                  | Remove a document by ID                                                                      |
-| `clear()`                     | Remove all documents                                                                         |
-| `size()`                      | Get document count                                                                           |
-| `export()`                    | Export all documents and vectors for persistence                                             |
-| `import(data)`                | Import previously exported data                                                              |
-| `isInitialized()`             | Check if the model is loaded                                                                 |
-
-### Embedder
-
-Low-level text-to-vector conversion.
-
-| Method                  | Description                                                     |
-| ----------------------- | --------------------------------------------------------------- |
-| `new Embedder(config?)` | Create instance. Config: `model`, `cacheDir`, `progressLogging` |
-| `init()`                | Load the model                                                  |
-| `embed(text)`           | Convert text to a 384-dimension vector                          |
-| `embedBatch(texts)`     | Convert multiple texts (batched for efficiency)                 |
-| `getDimension()`        | Get vector dimension (384 for default model)                    |
-| `isInitialized()`       | Check if ready                                                  |
-| `getConfig()`           | Get current configuration                                       |
-
-### VectorStore
-
-In-memory vector storage and similarity search.
-
-| Method                         | Description                                                       |
-| ------------------------------ | ----------------------------------------------------------------- |
-| `new VectorStore(config?)`     | Create instance. Config: `minSimilarity`, `defaultLimit`          |
-| `add(id, vector, metadata?)`   | Store a vector                                                    |
-| `addBatch(entries)`            | Store multiple vectors                                            |
-| `search(queryVector, opts?)`   | Find similar vectors. Options: `limit`, `minSimilarity`, `filter` |
-| `get(id)`                      | Retrieve a vector by ID                                           |
-| `remove(id)`                   | Remove by ID                                                      |
-| `clear()`                      | Remove all                                                        |
-| `size()`                       | Get count                                                         |
-| `keys()`                       | Get all IDs                                                       |
-| `export()` / `import(entries)` | Persistence                                                       |
-
-### Utilities
-
-| Function                 | Description                                     |
-| ------------------------ | ----------------------------------------------- |
-| `cosineSimilarity(a, b)` | Cosine similarity between two vectors (-1 to 1) |
-| `normalizeVector(v)`     | Normalize to unit length                        |
-
-## Advanced
-
-### Batch processing
-
-```typescript
-const texts = ["Document 1", "Document 2" /* ... */];
-const embeddings = await embedder.embedBatch(texts);
-store.addBatch(
-  texts.map((text, i) => ({
-    id: `doc-${i}`,
-    vector: embeddings[i],
-    metadata: { text },
-  })),
-);
-```
-
-### Vector utilities
-
-```typescript
-import {
-  cosineSimilarity,
-  normalizeVector,
-} from "@nacho-labs/nachos-embeddings";
-
-const similarity = cosineSimilarity([0.5, 0.3, 0.8], [0.6, 0.4, 0.7]);
-const normalized = normalizeVector([3, 4]); // Unit vector
-```
-
-## Troubleshooting
-
-### Model download fails
-
-The embedding model (~25MB) is downloaded on first run and cached at
-`.cache/transformers/`. If the download fails:
-
-- Check your internet connection
-- Check disk space
-- Try setting a custom cache directory: `new SemanticSearch({ cacheDir: '/tmp/models' })`
-
-### "Embedder not initialized" error
-
-You must call `init()` before `embed()`, `embedBatch()`, `search()`, or
-`addDocument()`. This is an async operation that loads the model:
-
-```typescript
-const search = new SemanticSearch();
-await search.init(); // Don't forget this
-```
-
-### Out of memory with large batches
-
-Reduce batch size by processing in chunks:
-
-```typescript
-const CHUNK = 100;
-for (let i = 0; i < texts.length; i += CHUNK) {
-  const batch = texts.slice(i, i + CHUNK);
-  const vecs = await embedder.embedBatch(batch);
-  store.addBatch(
-    batch.map((text, j) => ({
-      id: `doc-${i + j}`,
-      vector: vecs[j],
-      metadata: { text },
-    })),
-  );
-}
-```
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ## Development
 
 ```bash
 npm install
-npm run build
-npm test
-npm run typecheck
+npm run check   # lint, prettier, typecheck, build, tests with coverage, packed-tarball smoke test
 ```
 
-### Toolchain maintenance
-
-TypeScript is intentionally held at 6.0.3: the installed
-`@typescript-eslint/parser` and `@typescript-eslint/eslint-plugin` 8.65.0
-support TypeScript `>=4.8.4 <6.1.0` and reject TypeScript 7.0.2. Revisit this
-pin once typescript-eslint supports it.
+`npm install` installs git hooks (pre-commit: lint, format, typecheck; pre-push: `npm run check`). Releasing is documented in [RELEASING.md](RELEASING.md).
 
 ## License
 

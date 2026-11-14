@@ -1,25 +1,15 @@
 import {
   SemanticSearch,
   type SemanticSearchOptions,
-  type Document,
 } from "./semantic-search.js";
-import { type SearchResult } from "./vector-store.js";
-import { chunkText, normalizeText, estimateTokens } from "./utils.js";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { LEGACY_DEFAULT_STORE_PATH } from "./defaults.js";
 
-export interface EnhancedSemanticSearchConfig extends SemanticSearchOptions {
-  autoSave?: boolean;
-  storePath?: string;
-  autoChunk?: boolean;
-  maxChunkTokens?: number;
-  chunkOverlap?: number;
-  deduplicateExact?: boolean;
-  deduplicateSimilarity?: number;
-  temporalBoost?: boolean;
-  verbose?: boolean;
-}
+/**
+ * @deprecated Use SemanticSearchOptions. Every enhanced option (autoSave,
+ * storePath, autoChunk, maxChunkTokens, chunkOverlap, temporalBoost, verbose,
+ * deduplicateExact, deduplicateSimilarity) is now accepted by SemanticSearch.
+ */
+export type EnhancedSemanticSearchConfig = SemanticSearchOptions;
 
 interface DocumentMetadata {
   timestamp?: number;
@@ -28,372 +18,30 @@ interface DocumentMetadata {
   [key: string]: unknown;
 }
 
-function resolveEnhancedConfig(
-  config: EnhancedSemanticSearchConfig,
-): Omit<Required<EnhancedSemanticSearchConfig>, "provider"> {
-  const defaults = {
-    model: "Xenova/all-MiniLM-L6-v2",
-    minSimilarity: 0.4,
-    cacheDir: ".cache/transformers",
-    progressLogging: false,
-    autoSave: false,
-    storePath: ".semantic-store.json",
-    autoChunk: false,
-    maxChunkTokens: 500,
-    chunkOverlap: 50,
-    deduplication: true,
-    deduplicateExact: true,
-    deduplicateSimilarity: 0,
-    temporalBoost: false,
-    verbose: false,
-  };
-  return {
-    ...defaults,
-    ...Object.fromEntries(
-      Object.entries(config).filter(([, value]) => value !== undefined),
-    ),
-  };
-}
-
+/**
+ * @deprecated Use SemanticSearch, which now includes all enhanced features.
+ *
+ * Compatibility alias: it differs from SemanticSearch only in the legacy
+ * defaults it applies, namely `deduplicateExact: true` (normalized-text
+ * dedup) and the `.semantic-store.json` storePath when autoSave is on
+ * without a path.
+ */
 export class EnhancedSemanticSearch<
   T extends DocumentMetadata = DocumentMetadata,
 > extends SemanticSearch<T> {
-  private enhancedConfig: Omit<
-    Required<EnhancedSemanticSearchConfig>,
-    "provider"
-  >;
-  private saveQueue = Promise.resolve();
-  private textHashes = new Map<string, string>();
-
   constructor(config: EnhancedSemanticSearchConfig = {}) {
-    super(config);
-    this.enhancedConfig = resolveEnhancedConfig(config);
-  }
-
-  override async init(): Promise<void> {
-    await super.init();
-    await this.load();
-  }
-
-  async load(): Promise<void> {
-    if (
-      !this.enhancedConfig.storePath ||
-      !existsSync(this.enhancedConfig.storePath)
-    ) {
-      return;
-    }
-
-    try {
-      const raw = await readFile(this.enhancedConfig.storePath, "utf-8");
-      const data = JSON.parse(raw);
-
-      if (Array.isArray(data)) {
-        super.import(data);
-
-        for (const item of data) {
-          const normalized = normalizeText(item.text);
-          this.textHashes.set(normalized, item.id);
-        }
-
-        if (this.enhancedConfig.verbose) {
-          console.log(
-            `[EnhancedSemanticSearch] Loaded ${data.length} documents from ${this.enhancedConfig.storePath}`,
-          );
-        }
-      }
-    } catch (err) {
-      if (this.enhancedConfig.verbose) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        console.warn(
-          `[EnhancedSemanticSearch] Failed to load from ${this.enhancedConfig.storePath}:`,
-          errorMessage,
-        );
-      }
-    }
-  }
-
-  private async save(): Promise<void> {
-    if (!this.enhancedConfig.autoSave || !this.enhancedConfig.storePath) {
-      return;
-    }
-
-    this.saveQueue = this.saveQueue.then(async () => {
-      try {
-        const dir = dirname(this.enhancedConfig.storePath!);
-        if (!existsSync(dir)) {
-          await mkdir(dir, { recursive: true });
-        }
-
-        const data = super.export();
-        await writeFile(
-          this.enhancedConfig.storePath!,
-          JSON.stringify(data, null, 2),
-        );
-
-        if (this.enhancedConfig.verbose) {
-          console.log(
-            `[EnhancedSemanticSearch] Saved ${data.length} documents to ${this.enhancedConfig.storePath}`,
-          );
-        }
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error("[EnhancedSemanticSearch] Save failed:", errorMessage);
-      }
+    super({
+      ...config,
+      deduplicateExact: config.deduplicateExact ?? true,
+      ...(config.autoSave &&
+        !config.storePath && { storePath: LEGACY_DEFAULT_STORE_PATH }),
     });
-
-    return this.saveQueue;
   }
 
-  private async checkExactDuplicate(text: string): Promise<string | null> {
-    if (!this.enhancedConfig.deduplicateExact) {
-      return null;
-    }
-
-    const normalized = normalizeText(text);
-    return this.textHashes.get(normalized) ?? null;
-  }
-
-  private async checkFuzzyDuplicate(
-    text: string,
-  ): Promise<{ id: string; similarity: number } | null> {
-    if (this.enhancedConfig.deduplicateSimilarity === 0) {
-      return null;
-    }
-
-    const results = await super.search(text, {
-      limit: 1,
-      minSimilarity: this.enhancedConfig.deduplicateSimilarity,
-    });
-
-    return results.length > 0
-      ? { id: results[0]!.id, similarity: results[0]!.similarity }
-      : null;
-  }
-
-  override async addDocument(doc: Document<T>): Promise<void> {
-    const exactDup = await this.checkExactDuplicate(doc.text);
-    if (exactDup) {
-      if (this.enhancedConfig.verbose) {
-        console.log(
-          `[EnhancedSemanticSearch] Skipped exact duplicate: "${doc.id}" matches "${exactDup}"`,
-        );
-      }
-      return;
-    }
-
-    const fuzzyDup = await this.checkFuzzyDuplicate(doc.text);
-    if (fuzzyDup) {
-      if (this.enhancedConfig.verbose) {
-        console.log(
-          `[EnhancedSemanticSearch] Skipped fuzzy duplicate: "${doc.id}" ~= "${fuzzyDup.id}" (${(fuzzyDup.similarity * 100).toFixed(1)}%)`,
-        );
-      }
-      return;
-    }
-
-    const metadata = { ...doc.metadata } as T;
-    if (this.enhancedConfig.temporalBoost && !metadata.timestamp) {
-      metadata.timestamp = Date.now();
-    }
-
-    const tokenCount = estimateTokens(doc.text);
-    if (
-      this.enhancedConfig.autoChunk &&
-      tokenCount > this.enhancedConfig.maxChunkTokens
-    ) {
-      await this.addLongDocument({ ...doc, metadata });
-    } else {
-      await super.addDocument({ ...doc, metadata });
-
-      const normalized = normalizeText(doc.text);
-      this.textHashes.set(normalized, doc.id);
-    }
-
-    await this.save();
-  }
-
-  private async addLongDocument(doc: Document<T>): Promise<void> {
-    const chunks = chunkText(doc.text, {
-      maxTokens: this.enhancedConfig.maxChunkTokens,
-      overlapTokens: this.enhancedConfig.chunkOverlap,
-    });
-
-    if (this.enhancedConfig.verbose) {
-      console.log(
-        `[EnhancedSemanticSearch] Chunking "${doc.id}" into ${chunks.length} parts`,
-      );
-    }
-
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]!;
-      const chunkId = chunks.length === 1 ? doc.id : `${doc.id}#chunk${i}`;
-
-      const chunkMetadata = {
-        ...doc.metadata,
-        chunkIndex: i,
-        parentId: doc.id,
-      } as T;
-
-      await super.addDocument({
-        id: chunkId,
-        text: chunk,
-        metadata: chunkMetadata,
-      });
-
-      const normalized = normalizeText(chunk);
-      this.textHashes.set(normalized, chunkId);
-    }
-  }
-
-  override async addDocuments(docs: Document<T>[]): Promise<void> {
-    const finalDocs: Document<T>[] = [];
-    const hashesToUpdate: { normalized: string; id: string }[] = [];
-
-    for (const doc of docs) {
-      const exactDup = await this.checkExactDuplicate(doc.text);
-      if (exactDup) {
-        if (this.enhancedConfig.verbose) {
-          console.log(
-            `[EnhancedSemanticSearch] Skipped exact duplicate: "${doc.id}" matches "${exactDup}"`,
-          );
-        }
-        continue;
-      }
-
-      const fuzzyDup = await this.checkFuzzyDuplicate(doc.text);
-      if (fuzzyDup) {
-        if (this.enhancedConfig.verbose) {
-          console.log(
-            `[EnhancedSemanticSearch] Skipped fuzzy duplicate: "${doc.id}" ~= "${fuzzyDup.id}" (${(fuzzyDup.similarity * 100).toFixed(1)}%)`,
-          );
-        }
-        continue;
-      }
-
-      const metadata = { ...doc.metadata } as T;
-      if (this.enhancedConfig.temporalBoost && !metadata.timestamp) {
-        metadata.timestamp = Date.now();
-      }
-
-      const tokenCount = estimateTokens(doc.text);
-      if (
-        this.enhancedConfig.autoChunk &&
-        tokenCount > this.enhancedConfig.maxChunkTokens
-      ) {
-        const chunks = chunkText(doc.text, {
-          maxTokens: this.enhancedConfig.maxChunkTokens,
-          overlapTokens: this.enhancedConfig.chunkOverlap,
-        });
-
-        if (this.enhancedConfig.verbose) {
-          console.log(
-            `[EnhancedSemanticSearch] Chunking "${doc.id}" into ${chunks.length} parts`,
-          );
-        }
-
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i]!;
-          const chunkId = chunks.length === 1 ? doc.id : `${doc.id}#chunk${i}`;
-
-          const chunkMetadata = {
-            ...metadata,
-            chunkIndex: i,
-            parentId: doc.id,
-          } as T;
-
-          finalDocs.push({
-            id: chunkId,
-            text: chunk,
-            metadata: chunkMetadata,
-          });
-
-          const normalized = normalizeText(chunk);
-          hashesToUpdate.push({ normalized, id: chunkId });
-        }
-      } else {
-        finalDocs.push({ ...doc, metadata });
-
-        const normalized = normalizeText(doc.text);
-        hashesToUpdate.push({ normalized, id: doc.id });
-      }
-    }
-
-    if (finalDocs.length > 0) {
-      await super.addDocuments(finalDocs);
-      for (const update of hashesToUpdate) {
-        this.textHashes.set(update.normalized, update.id);
-      }
-      await this.save();
-    }
-  }
-
-  override async search(
-    query: string,
-    options?: {
-      limit?: number;
-      minSimilarity?: number;
-      filter?: (metadata?: T) => boolean;
-      temporalBoost?: boolean;
-    },
-  ): Promise<Array<SearchResult<T> & { text: string }>> {
-    let results = await super.search(query, options);
-
-    const shouldBoost =
-      options?.temporalBoost ?? this.enhancedConfig.temporalBoost;
-    if (shouldBoost) {
-      const now = Date.now();
-
-      results = results.map((r) => {
-        const timestamp = r.metadata?.timestamp ?? now;
-        const ageMs = now - timestamp;
-        const ageDays = ageMs / (1000 * 60 * 60 * 24);
-
-        // Exponential decay: after 30 days boost = 0.5, after 365 days = ~0.2
-        const recencyBoost = 1 / (1 + Math.log(1 + ageDays));
-
-        // 70% semantic, 30% recency
-        const boostedSimilarity = r.similarity * (0.7 + 0.3 * recencyBoost);
-
-        return {
-          ...r,
-          similarity: boostedSimilarity,
-        };
-      });
-
-      results.sort((a, b) => b.similarity - a.similarity);
-
-      if (options?.limit) {
-        results = results.slice(0, options.limit);
-      }
-    }
-
-    return results;
-  }
-
-  override async remove(id: string): Promise<boolean> {
-    const exportedDocs = super.export();
-    const doc = exportedDocs.find((d) => d.id === id);
-    if (doc) {
-      const normalized = normalizeText(doc.text);
-      this.textHashes.delete(normalized);
-    }
-
-    const removed = await super.remove(id);
-    return removed;
-  }
-
-  override async clear(): Promise<void> {
-    await super.clear();
-    this.textHashes.clear();
-  }
-
+  /** @deprecated Use persist(). A no-op when no storePath is configured. */
   async forceSave(): Promise<void> {
-    await this.save();
-  }
-
-  getConfig(): Readonly<
-    Omit<Required<EnhancedSemanticSearchConfig>, "provider">
-  > {
-    return { ...this.enhancedConfig };
+    if (this.getConfig().storePath) {
+      await this.persist();
+    }
   }
 }

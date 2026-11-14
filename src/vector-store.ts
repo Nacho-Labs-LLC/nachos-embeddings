@@ -2,6 +2,8 @@
  * In-memory vector store with semantic search
  */
 
+import { DEFAULT_LIMIT, DEFAULT_MIN_SIMILARITY } from "./defaults.js";
+
 export interface VectorStoreConfig {
   /**
    * Minimum similarity score (0-1) for search results
@@ -16,8 +18,7 @@ export interface VectorStoreConfig {
   defaultLimit?: number;
 
   /**
-   * Enable caching of embeddings
-   * @default true
+   * @deprecated Never had any effect; accepted for type compatibility only.
    */
   cacheEmbeddings?: boolean;
 }
@@ -52,13 +53,12 @@ export interface SearchResult<T = unknown> {
  */
 export class VectorStore<T = unknown> {
   private vectors = new Map<string, VectorEntry<T>>();
-  private config: Required<VectorStoreConfig>;
+  private config: Required<Omit<VectorStoreConfig, "cacheEmbeddings">>;
 
   constructor(config: VectorStoreConfig = {}) {
     this.config = {
-      minSimilarity: config.minSimilarity ?? 0.4,
-      defaultLimit: config.defaultLimit ?? 10,
-      cacheEmbeddings: config.cacheEmbeddings ?? true,
+      minSimilarity: config.minSimilarity ?? DEFAULT_MIN_SIMILARITY,
+      defaultLimit: config.defaultLimit ?? DEFAULT_LIMIT,
     };
   }
 
@@ -113,6 +113,11 @@ export class VectorStore<T = unknown> {
     return this.vectors.get(id);
   }
 
+  has(id: string): boolean {
+    return this.vectors.has(id);
+  }
+
+  /** O(1) removal by id. */
   remove(id: string): boolean {
     return this.vectors.delete(id);
   }

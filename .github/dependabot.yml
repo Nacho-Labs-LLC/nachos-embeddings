@@ -1,4 +1,4 @@
-# Baseline Dependabot config for active maintenance.
+# Dependabot config: weekly, grouped to keep PR volume low.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -12,3 +12,32 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
+    groups:
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+      dev-dependencies:
+        dependency-type: "development"
+        exclude-patterns:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+        update-types:
+          - "minor"
+          - "patch"
+      production-dependencies:
+        dependency-type: "production"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

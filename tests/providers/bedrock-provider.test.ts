@@ -3,9 +3,10 @@ import type { BedrockModelAdapter } from "../../src/providers/bedrock/models/typ
 
 // Mock the AWS SDK
 const mockSend = vi.fn();
+const mockDestroy = vi.fn();
 vi.mock("@aws-sdk/client-bedrock-runtime", () => ({
   BedrockRuntimeClient: vi.fn(function BedrockRuntimeClient() {
-    return { send: mockSend };
+    return { send: mockSend, destroy: mockDestroy };
   }),
   InvokeModelCommand: vi.fn(function InvokeModelCommand(input: unknown) {
     return input;
@@ -245,6 +246,32 @@ describe("BedrockProvider", () => {
     expect(config.retry.maxAttempts).toBe(3);
   });
 
+  it("redacts secrets from getConfig and returns copies", () => {
+    const provider = new BedrockProvider({
+      credentials: {
+        strategy: "explicit",
+        accessKeyId: "AKIAEXAMPLE",
+        secretAccessKey: "super-secret-key",
+        sessionToken: "session-token-value",
+      },
+    });
+    const config = provider.getConfig();
+    expect(config.credentials.accessKeyId).toBe("AKIAEXAMPLE");
+    expect(config.credentials.secretAccessKey).toBe("[redacted]");
+    expect(config.credentials.sessionToken).toBe("[redacted]");
+    expect(JSON.stringify(config)).not.toContain("super-secret-key");
+    expect(JSON.stringify(config)).not.toContain("session-token-value");
+
+    (config.retry as { maxAttempts: number }).maxAttempts = 99;
+    expect(provider.getConfig().retry.maxAttempts).toBe(3);
+  });
+
+  it("leaves absent secrets absent in getConfig", () => {
+    const config = new BedrockProvider({}).getConfig();
+    expect(config.credentials.secretAccessKey).toBeUndefined();
+    expect(config.credentials.sessionToken).toBeUndefined();
+  });
+
   it("validates model options on construction", () => {
     expect(
       () => new BedrockProvider({ modelOptions: { dimensions: 999 } }),
@@ -328,5 +355,73 @@ describe("BedrockProvider", () => {
         }),
       }),
     );
+  });
+
+  it("does not commit state when the dimension probe fails", async () => {
+    mockSend.mockRejectedValueOnce(new Error("AccessDenied"));
+    const provider = new BedrockProvider();
+
+    await expect(provider.init()).rejects.toThrow("AccessDenied");
+
+    expect(provider.isInitialized()).toBe(false);
+    expect(await provider.getDimension()).toBeNull();
+    await expect(provider.embed("x")).rejects.toThrow("not initialized");
+    await expect(provider.embedBatch(["x"])).rejects.toThrow("not initialized");
+    expect(mockDestroy).toHaveBeenCalledTimes(1); // failed client is cleaned up
+  });
+
+  it("can retry init after a failed probe", async () => {
+    mockSend.mockRejectedValueOnce(new Error("AccessDenied"));
+    const provider = new BedrockProvider();
+    await expect(provider.init()).rejects.toThrow("AccessDenied");
+
+    mockEmbeddingResponse([0.1, 0.2]);
+    await provider.init();
+    expect(provider.isInitialized()).toBe(true);
+    expect(await provider.getDimension()).toBe(2);
+  });
+
+  it("memoizes concurrent init() calls", async () => {
+    mockEmbeddingResponse([0.1, 0.2]);
+    const provider = new BedrockProvider();
+    await Promise.all([provider.init(), provider.init(), provider.init()]);
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(BedrockRuntimeClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose destroys the client and resets state", async () => {
+    mockEmbeddingResponse([0.1, 0.2]);
+    const provider = new BedrockProvider();
+    await provider.init();
+    await provider.dispose();
+
+    expect(mockDestroy).toHaveBeenCalledTimes(1);
+    expect(provider.isInitialized()).toBe(false);
+    expect(await provider.getDimension()).toBeNull();
+    await expect(provider.embed("x")).rejects.toThrow("not initialized");
+  });
+
+  it("dispose before init is a no-op and waits for in-flight init", async () => {
+    const idle = new BedrockProvider();
+    await idle.dispose();
+    expect(mockDestroy).not.toHaveBeenCalled();
+
+    mockEmbeddingResponse([0.1]);
+    const provider = new BedrockProvider();
+    const init = provider.init();
+    await provider.dispose();
+    await init;
+    expect(mockDestroy).toHaveBeenCalledTimes(1);
+    expect(provider.isInitialized()).toBe(false);
+  });
+
+  it("reports the model id", () => {
+    expect(new BedrockProvider().getModelId()).toBe(
+      "amazon.titan-embed-text-v2:0",
+    );
+    expect(
+      new BedrockProvider({ modelId: "cohere.embed-english-v3" }).getModelId(),
+    ).toBe("cohere.embed-english-v3");
   });
 });

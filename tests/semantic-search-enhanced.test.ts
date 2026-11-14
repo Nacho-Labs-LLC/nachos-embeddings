@@ -1,85 +1,115 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EnhancedSemanticSearch } from "../src/semantic-search-enhanced.js";
-import * as fs from "node:fs";
-import * as fsPromises from "node:fs/promises";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  EnhancedSemanticSearch,
+  type EnhancedSemanticSearchConfig,
+} from "../src/semantic-search-enhanced.js";
+import { FakeProvider } from "./fake-provider.js";
 
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  return {
-    ...actual,
-    existsSync: vi.fn(),
-  };
+let dir: string;
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "enh-"));
+});
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
 });
 
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return {
-    ...actual,
-    readFile: vi.fn(),
-    writeFile: vi.fn(),
-    mkdir: vi.fn(),
-  };
-});
-
-describe("EnhancedSemanticSearch", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe("EnhancedSemanticSearch (deprecated alias)", () => {
+  it("maps the old config: normalized exact dedup by default", async () => {
+    const s = new EnhancedSemanticSearch({ provider: new FakeProvider() });
+    await s.addDocument({ id: "a", text: "Hello   World" });
+    await s.addDocument({ id: "b", text: "hello world" });
+    expect(s.size()).toBe(1);
+    expect(s.getConfig().deduplicate).toBe("normalized");
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
+  it("maps deduplicateExact:false to exact and deduplicateSimilarity to similarity", () => {
+    const p = new FakeProvider();
+    expect(
+      new EnhancedSemanticSearch({
+        provider: p,
+        deduplicateExact: false,
+      }).getConfig().deduplicate,
+    ).toBe("exact");
+    expect(
+      new EnhancedSemanticSearch({
+        provider: p,
+        deduplicateSimilarity: 0.9,
+      }).getConfig().deduplicate,
+    ).toEqual({ similarity: 0.9 });
   });
 
-  describe("load()", () => {
-    it("handles errors when loading semantic search store fails", async () => {
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      const storePath = ".dummy-store.json";
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      const testError = new Error("Test read error");
-      vi.mocked(fsPromises.readFile).mockRejectedValue(testError);
-
-      const search = new EnhancedSemanticSearch({
-        verbose: true,
-        storePath,
-      });
-
-      await search.load();
-
-      expect(fs.existsSync).toHaveBeenCalledWith(storePath);
-      expect(fsPromises.readFile).toHaveBeenCalledWith(storePath, "utf-8");
-      expect(warnSpy).toHaveBeenCalledWith(
-        `[EnhancedSemanticSearch] Failed to load from ${storePath}:`,
-        testError.message,
-      );
-    });
-  });
-
-  it("inherits safe document reads without exposing vectors", () => {
-    const search = new EnhancedSemanticSearch<{ tag: string }>({
-      deduplicateExact: false,
-    });
-    search.import([
-      {
-        id: "doc1",
-        text: "hello",
-        vector: [1, 0, 0],
-        metadata: { tag: "greeting" },
-      },
+  it("accepts the full old mcp-semantic-search config and round-trips via a store", async () => {
+    const storePath = join(dir, "sub", "store.json");
+    const cfg: EnhancedSemanticSearchConfig = {
+      provider: new FakeProvider(),
+      minSimilarity: 0.1,
+      autoSave: true,
+      storePath,
+      autoChunk: true,
+      deduplicateExact: true,
+      deduplicateSimilarity: 0,
+      temporalBoost: true,
+      verbose: false,
+    };
+    const s = new EnhancedSemanticSearch<{ kind?: string }>(cfg);
+    await s.init();
+    await s.addDocuments([
+      { id: "a", text: "tacos for breakfast", metadata: { kind: "pref" } },
+      { id: "b", text: "pizza for dinner" },
     ]);
-
-    const document = search.getDocument("doc1");
-    const summaries = search.listDocuments();
-
-    expect(document).toEqual({
-      id: "doc1",
-      text: "hello",
-      metadata: { tag: "greeting" },
+    const s2 = new EnhancedSemanticSearch({
+      ...cfg,
+      provider: new FakeProvider(),
     });
-    expect(document).not.toHaveProperty("vector");
-    expect(summaries).toEqual([{ id: "doc1", metadata: { tag: "greeting" } }]);
-    expect(summaries[0]).not.toHaveProperty("text");
-    expect(summaries[0]).not.toHaveProperty("vector");
-    expect(search.getDocument("missing")).toBeUndefined();
+    await s2.init();
+    expect(s2.size()).toBe(2);
+    const res = await s2.search("breakfast tacos", { limit: 1 });
+    expect(res[0]?.id).toBe("a");
+    expect(s2.export()).toHaveLength(2);
+  });
+
+  it("uses the legacy default store path when autoSave has no path", () => {
+    const s = new EnhancedSemanticSearch({
+      provider: new FakeProvider(),
+      autoSave: true,
+    });
+    expect(s.getConfig().storePath).toBe(".semantic-store.json");
+  });
+
+  it("forceSave writes the store, and is a no-op without storePath", async () => {
+    const none = new EnhancedSemanticSearch({ provider: new FakeProvider() });
+    await expect(none.forceSave()).resolves.toBeUndefined();
+
+    const storePath = join(dir, "s.json");
+    const s = new EnhancedSemanticSearch({
+      provider: new FakeProvider(),
+      storePath,
+    });
+    await s.addDocument({ id: "a", text: "x y z" });
+    await s.forceSave();
+    expect(JSON.parse(await readFile(storePath, "utf-8"))).toHaveLength(1);
+  });
+
+  it("reads the old on-disk array format", async () => {
+    const storePath = join(dir, "old.json");
+    await writeFile(
+      storePath,
+      JSON.stringify([
+        { id: "a", text: "alpha", vector: [1, 0], metadata: { k: 1 } },
+      ]),
+    );
+    const s = new EnhancedSemanticSearch({
+      provider: new FakeProvider(),
+      storePath,
+    });
+    await s.init();
+    expect(s.getDocument("a")).toEqual({
+      id: "a",
+      text: "alpha",
+      metadata: { k: 1 },
+    });
   });
 });

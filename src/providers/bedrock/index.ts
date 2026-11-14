@@ -1,5 +1,7 @@
 export {
   BedrockProvider,
+  BEDROCK_DEFAULT_MODEL_ID,
+  BEDROCK_DEFAULT_REGION,
   type BedrockProviderConfig,
   type BedrockCredentials,
   type CredentialStrategy,
