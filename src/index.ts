@@ -25,6 +25,12 @@ export {
   SemanticSearch,
   type SemanticSearchConfig,
   type SemanticSearchOptions,
+  type SemanticSearchLogger,
+  type SemanticSearchResult,
+  type ResolvedSemanticSearchConfig,
+  type DeduplicateOption,
+  type SearchOptions,
+  StoreCorruptError,
   type Document,
   type DocumentSummary,
 } from "./semantic-search.js";
