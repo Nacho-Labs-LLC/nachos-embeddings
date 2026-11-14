@@ -74,7 +74,7 @@
     "url": "git+https://github.com/Nacho-Labs-LLC/nachos-embeddings.git"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0"
+    "@huggingface/transformers": "^4.3.2"
   },
   "peerDependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.0.0",
@@ -93,25 +93,23 @@
     }
   },
   "devDependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1101.0",
-    "@aws-sdk/credential-provider-ini": "^3.973.10",
-    "@aws-sdk/credential-providers": "^3.1101.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1169.0",
+    "@aws-sdk/credential-provider-ini": "^3.973.30",
+    "@aws-sdk/credential-providers": "^3.1169.0",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.1.2",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0",
-    "@vitest/coverage-v8": "^5.0.2",
-    "eslint": "^10.8.0",
+    "@types/node": "^26.6.6",
+    "@typescript-eslint/eslint-plugin": "^8.72.2",
+    "@typescript-eslint/parser": "^8.72.2",
+    "@vitest/coverage-v8": "^5.1.0",
+    "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^17.8.0",
-    "prettier": "^3.9.6",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.0"
+    "vitest": "^5.1.0"
   },
   "overrides": {
-    "adm-zip": "0.6.0",
-    "brace-expansion": "5.0.9",
-    "flatted": "3.4.4",
-    "sharp": "0.35.3"
+    "brace-expansion": "5.0.13",
+    "minimatch": "11.0.8"
   }
 }
