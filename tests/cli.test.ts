@@ -134,4 +134,25 @@ describe("nachos-embeddings CLI", () => {
       },
     ]);
   });
+
+  it("serve mode loads once, announces ready and answers JSON lines", () => {
+    const input = [
+      JSON.stringify({ id: 1, texts: ["a", "b"] }),
+      "not json",
+      JSON.stringify({ id: 3, texts: ["c"] }),
+    ].join("\n");
+    const result = runCli(["serve", "--model", "custom-model"], input + "\n");
+
+    expect(result.status).toBe(0);
+    const out = result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(out[0]).toEqual({ ready: true, model: "custom-model" });
+    expect(out[1]).toEqual({ id: 1, vectors: [[0.25], [1.25]] });
+    expect(out[2].id).toBeNull();
+    expect(out[2].error).toContain("invalid request");
+    expect(out[3]).toEqual({ id: 3, vectors: [[0.25]] });
+    expect(result.providers).toHaveLength(1);
+  });
 });

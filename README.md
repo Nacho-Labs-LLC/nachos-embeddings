@@ -187,6 +187,10 @@ const results = await search.search("auth patterns", {
 });
 ```
 
+## CLI
+
+`nachos-embeddings embed --stdin --json` reads one text per line and prints one JSON vector per line. For repeated calls, `nachos-embeddings serve [--provider ...] [--model ...]` keeps the model loaded: it prints `{"ready":true,"model":"..."}`, then answers each stdin line `{"id":1,"texts":["..."]}` with `{"id":1,"vectors":[[...]]}` (or `{"id":1,"error":"..."}`), and exits on stdin EOF.
+
 ## Provider system
 
 nachos-embeddings uses a modular provider architecture. The default `Embedder` uses local Transformers.js, but you can swap in any provider that implements the `EmbeddingProvider` interface.

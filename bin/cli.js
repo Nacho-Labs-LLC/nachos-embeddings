@@ -11,9 +11,15 @@
  *   nachos-embeddings embed --stdin --json
  *   nachos-embeddings embed --stdin --json --provider bedrock
  *   nachos-embeddings embed --stdin --json --provider transformers --model Xenova/all-MiniLM-L6-v2
+ *   nachos-embeddings serve [--provider ...] [--model ...]
  *
  * Flags:
- *   embed                subcommand (required)
+ *   embed                subcommand: one-shot embedding
+ *   serve                subcommand: persistent JSON-lines server. Loads the
+ *                        provider once, prints {"ready":true,"model":"<id>"},
+ *                        then for each stdin line {"id":n,"texts":[...]}
+ *                        replies {"id":n,"vectors":[[...]]} or
+ *                        {"id":n,"error":"..."}. Exits 0 on stdin EOF.
  *   --stdin              read texts from stdin (required; one text per line)
  *   --json               emit JSON arrays (required; the only format today)
  *   --provider <name>    'transformers' (default, local) | 'bedrock' (Titan v2)
@@ -24,6 +30,7 @@
  * All diagnostics go to stderr so stdout stays pure JSONL.
  */
 
+import { createInterface } from "node:readline";
 import { Embedder } from "../dist/embedder.js";
 
 const VALUE_OPTIONS = {
@@ -122,8 +129,55 @@ async function embedLines(provider, lines) {
   process.stdout.write(vectors.map((v) => JSON.stringify(v)).join("\n") + "\n");
 }
 
+const DEFAULT_MODELS = {
+  transformers: "Xenova/all-MiniLM-L6-v2",
+  bedrock: "amazon.titan-embed-text-v2:0",
+};
+
+function writeJson(value) {
+  process.stdout.write(JSON.stringify(value) + "\n");
+}
+
+function parseRequest(line) {
+  try {
+    const request = JSON.parse(line);
+    return request && typeof request === "object" ? request : {};
+  } catch {
+    return {};
+  }
+}
+
+async function answerRequest(provider, line) {
+  const request = parseRequest(line);
+  const id = request.id ?? null;
+  if (!Array.isArray(request.texts)) {
+    return { id, error: "invalid request: expected {id, texts: [...]}" };
+  }
+  try {
+    return { id, vectors: await provider.embedBatch(request.texts) };
+  } catch (e) {
+    return { id, error: String(e?.message ?? e) };
+  }
+}
+
+async function runServe(args) {
+  const provider = await makeProvider(args).catch((e) =>
+    fail("init failed", e),
+  );
+  writeJson({
+    ready: true,
+    model: args.model ?? DEFAULT_MODELS[args.provider] ?? provider.name,
+  });
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  // Sequential: one in-flight request at a time keeps replies in order.
+  for await (const line of lines) {
+    if (line.trim()) writeJson(await answerRequest(provider, line));
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args._[0] === "serve") return runServe(args);
   if (!isEmbedCommand(args)) {
     process.stderr.write(USAGE);
     process.exit(1);
