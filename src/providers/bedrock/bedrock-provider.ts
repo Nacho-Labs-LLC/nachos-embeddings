@@ -158,6 +158,7 @@ export class BedrockProvider implements EmbeddingProvider {
     };
 
     if (this.resolvedConfig.progressLogging) {
+      // eslint-disable-next-line no-console -- opt-in `progressLogging` is documented to log to the console
       console.log(
         `[BedrockProvider] Initialized with model: ${this.resolvedConfig.modelId}, region: ${this.resolvedConfig.region}`,
       );
@@ -176,6 +177,7 @@ export class BedrockProvider implements EmbeddingProvider {
     this.initialized = true;
 
     if (this.resolvedConfig.progressLogging) {
+      // eslint-disable-next-line no-console -- opt-in `progressLogging` is documented to log to the console
       console.log(
         `[BedrockProvider] Detected dimension: ${String(this.dimension)}`,
       );

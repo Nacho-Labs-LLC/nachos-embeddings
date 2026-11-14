@@ -209,6 +209,34 @@ export function resolveDeduplicate(
   return config.deduplication === false ? "off" : "exact";
 }
 
+function resolveConfig(
+  config: SemanticSearchOptions,
+): ResolvedSemanticSearchConfig {
+  return {
+    minSimilarity: config.minSimilarity,
+    autoSave: config.autoSave ?? false,
+    storePath: config.storePath,
+    loadOnInit: config.loadOnInit ?? true,
+    onCorruptStore: config.onCorruptStore ?? "throw",
+    deduplicate: resolveDeduplicate(config),
+    autoChunk: config.autoChunk ?? false,
+    maxChunkTokens: config.maxChunkTokens ?? DEFAULT_MAX_CHUNK_TOKENS,
+    chunkOverlap: config.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP,
+    temporalBoost: config.temporalBoost ?? false,
+  };
+}
+
+function createDefaultEmbedder(config: SemanticSearchOptions): Embedder {
+  return new Embedder({
+    ...(config.model !== undefined && { model: config.model }),
+    ...(config.cacheDir !== undefined && { cacheDir: config.cacheDir }),
+    ...(config.progressLogging !== undefined && {
+      progressLogging: config.progressLogging,
+    }),
+  });
+}
+
+/* eslint-disable no-console -- `verbose: true` is a documented opt-in that routes library logs to the console */
 function consoleLogger(): SemanticSearchLogger {
   return {
     debug: (m) => console.log(m),
@@ -217,6 +245,7 @@ function consoleLogger(): SemanticSearchLogger {
     error: (m) => console.error(m),
   };
 }
+/* eslint-enable no-console */
 
 function buildLogger(config: SemanticSearchConfig): SemanticSearchLogger {
   const base: Partial<SemanticSearchLogger> =
@@ -288,30 +317,10 @@ export class SemanticSearch<T = unknown> {
       throw new Error("storePath is required when autoSave is enabled");
     }
 
-    this.resolved = {
-      minSimilarity: config.minSimilarity,
-      autoSave: config.autoSave ?? false,
-      storePath: config.storePath,
-      loadOnInit: config.loadOnInit ?? true,
-      onCorruptStore: config.onCorruptStore ?? "throw",
-      deduplicate: resolveDeduplicate(config),
-      autoChunk: config.autoChunk ?? false,
-      maxChunkTokens: config.maxChunkTokens ?? DEFAULT_MAX_CHUNK_TOKENS,
-      chunkOverlap: config.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP,
-      temporalBoost: config.temporalBoost ?? false,
-    };
+    this.resolved = resolveConfig(config);
     this.logger = buildLogger(config);
     this.onError = config.onError;
-
-    this.embedder =
-      config.provider ??
-      new Embedder({
-        ...(config.model !== undefined && { model: config.model }),
-        ...(config.cacheDir !== undefined && { cacheDir: config.cacheDir }),
-        ...(config.progressLogging !== undefined && {
-          progressLogging: config.progressLogging,
-        }),
-      });
+    this.embedder = config.provider ?? createDefaultEmbedder(config);
     this.vectorStore = new VectorStore<T>({
       ...(config.minSimilarity !== undefined && {
         minSimilarity: config.minSimilarity,
@@ -504,7 +513,7 @@ export class SemanticSearch<T = unknown> {
   /** O(1) for plain documents; chunked parents also remove their chunks. */
   private removeOne(id: string): boolean {
     const parent = this.parentOf(this.vectorStore.get(id)?.metadata, id);
-    let removed = this.vectorStore.remove(id);
+    const removed = this.vectorStore.remove(id);
     this.documents.delete(id);
     this.releaseKeys(id);
     if (parent !== undefined) {

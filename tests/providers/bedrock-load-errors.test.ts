@@ -1,7 +1,7 @@
 import { dependencyError } from "../../src/providers/bedrock/dependency-error.js";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-type Factory = () => unknown;
+type Factory = () => Record<string, unknown>;
 const factories = vi.hoisted(() => ({
   sdk: undefined as unknown as { current: Factory },
   ini: undefined as unknown as { current: Factory },

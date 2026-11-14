@@ -23,11 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -39,9 +39,6 @@ jobs:
           test "$RELEASE_TAG" = "$actual_tag"
 
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+      - run: npm run check
       - run: npm pack --dry-run
       - run: npm publish --provenance --access public

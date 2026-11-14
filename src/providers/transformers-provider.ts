@@ -150,7 +150,9 @@ export class TransformersProvider implements EmbeddingProvider {
   private async load(): Promise<void> {
     const { model, cacheDir, dtype, progressLogging } = this.config;
     if (progressLogging) {
+      // eslint-disable-next-line no-console -- opt-in `progressLogging` is documented to log to the console
       console.log(`[TransformersProvider] Loading model: ${model}`);
+      // eslint-disable-next-line no-console -- opt-in `progressLogging` is documented to log to the console
       console.log(`[TransformersProvider] Cache dir: ${cacheDir}`);
     }
 
@@ -164,6 +166,7 @@ export class TransformersProvider implements EmbeddingProvider {
     this.initialized = true;
 
     if (progressLogging) {
+      // eslint-disable-next-line no-console -- opt-in `progressLogging` is documented to log to the console
       console.log("[TransformersProvider] Model loaded successfully");
     }
   }

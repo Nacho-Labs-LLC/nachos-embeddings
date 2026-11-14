@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -61,28 +61,40 @@ function createLoader() {
   return { loader, log: join(directory, "providers.jsonl") };
 }
 
-function runCli(args: string[], input = "") {
+function launchArgs(args: string[]) {
   const { loader, log } = createLoader();
-  const result = spawnSync(
-    process.execPath,
-    [
+  return {
+    log,
+    command: [
       "--experimental-loader",
       pathToFileURL(loader).href,
       "bin/cli.js",
       ...args,
     ],
-    {
+    options: {
       cwd: root,
-      encoding: "utf8",
-      input,
       env: { ...process.env, NACHOS_CLI_TEST_LOG: log },
     },
-  );
-  const events = (existsSync(log) ? readFileSync(log, "utf8") : "")
+  };
+}
+
+function readEvents(log: string) {
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8")
     .trim()
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function runCli(args: string[], input = "") {
+  const { log, command, options } = launchArgs(args);
+  const result = spawnSync(process.execPath, command, {
+    ...options,
+    encoding: "utf8",
+    input,
+  });
+  const events = readEvents(log);
   const providers = events.filter((event) => event.provider);
   const disposed = events.flatMap((event) => event.disposed ?? []);
   return { ...result, providers, disposed };
@@ -276,5 +288,29 @@ describe("nachos-embeddings CLI", () => {
       dimension: 2,
       cacheDir: null,
     });
+  });
+
+  it("serve exits cleanly and disposes when the stdout reader closes early", async () => {
+    const { log, command, options } = launchArgs(["serve"]);
+    const child = spawn(process.execPath, command, options);
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<number | null>((done) =>
+      child.on("close", (code) => done(code)),
+    );
+
+    // Wait for the ready line, then behave like `| head -1` and hang up.
+    await new Promise<void>((ready) =>
+      child.stdout.once("data", () => ready()),
+    );
+    child.stdout.destroy();
+    // This reply has nowhere to go, so the write fails with EPIPE.
+    child.stdin.write(JSON.stringify({ id: 1, texts: ["a"] }) + "\n");
+
+    expect(await exited).toBe(0);
+    expect(stderr).not.toContain("EPIPE");
+    expect(readEvents(log).flatMap((event) => event.disposed ?? [])).toEqual([
+      "transformers",
+    ]);
   });
 });

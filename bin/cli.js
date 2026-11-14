@@ -110,11 +110,15 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+// Provider currently in use, so the stdout EPIPE handler can dispose it.
+let activeProvider;
+
 async function makeProvider(args) {
-  if (args.provider === "bedrock") {
-    return makeBedrockProvider(args);
-  }
-  return makeTransformersProvider(args);
+  activeProvider =
+    args.provider === "bedrock"
+      ? await makeBedrockProvider(args)
+      : await makeTransformersProvider(args);
+  return activeProvider;
 }
 
 async function makeBedrockProvider({ model, region }) {
@@ -201,6 +205,18 @@ async function disposeProvider(provider) {
   }
 }
 
+// A reader that closes early (`serve | head -1`) makes stdout writes fail with
+// EPIPE. That is a normal way for a consumer to hang up: dispose and exit 0.
+let stdoutClosing = false;
+function handleStdoutError(err) {
+  if (err?.code !== "EPIPE") return fail("stdout", err);
+  if (stdoutClosing) return;
+  stdoutClosing = true;
+  const done = () => process.exit(0);
+  if (activeProvider) disposeProvider(activeProvider).then(done, done);
+  else done();
+}
+
 async function runServe(args) {
   const provider = await makeProvider(args).catch((e) =>
     fail("init failed", e),
@@ -245,6 +261,7 @@ function usageError(message) {
 }
 
 async function main() {
+  process.stdout.on("error", handleStdoutError);
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
