@@ -60,6 +60,8 @@ export interface BedrockProviderConfig extends BaseProviderConfig {
   modelAdapter?: BedrockModelAdapter;
 }
 
+const REDACTED = "[redacted]";
+
 interface ResolvedConfig {
   region: string;
   modelId: string;
@@ -235,8 +237,29 @@ export class BedrockProvider implements EmbeddingProvider {
     session?.client.destroy();
   }
 
+  /**
+   * Resolved configuration with secrets redacted: `secretAccessKey` and
+   * `sessionToken` are replaced with `"[redacted]"` so the result is safe to
+   * log or serialize. Nested objects are copies, so mutating the result
+   * cannot change the provider's state.
+   */
   getConfig(): Readonly<ResolvedConfig> {
-    return { ...this.resolvedConfig };
+    const { credentials, retry, modelOptions } = this.resolvedConfig;
+    return {
+      ...this.resolvedConfig,
+      credentials: {
+        ...credentials,
+        ...(credentials.secretAccessKey !== undefined && {
+          secretAccessKey: REDACTED,
+        }),
+        ...(credentials.sessionToken !== undefined && {
+          sessionToken: REDACTED,
+        }),
+      },
+      retry: { ...retry },
+      modelOptions:
+        modelOptions === undefined ? undefined : { ...modelOptions },
+    };
   }
 
   private async loadSdk(): Promise<{

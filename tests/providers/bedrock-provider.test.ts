@@ -246,6 +246,32 @@ describe("BedrockProvider", () => {
     expect(config.retry.maxAttempts).toBe(3);
   });
 
+  it("redacts secrets from getConfig and returns copies", () => {
+    const provider = new BedrockProvider({
+      credentials: {
+        strategy: "explicit",
+        accessKeyId: "AKIAEXAMPLE",
+        secretAccessKey: "super-secret-key",
+        sessionToken: "session-token-value",
+      },
+    });
+    const config = provider.getConfig();
+    expect(config.credentials.accessKeyId).toBe("AKIAEXAMPLE");
+    expect(config.credentials.secretAccessKey).toBe("[redacted]");
+    expect(config.credentials.sessionToken).toBe("[redacted]");
+    expect(JSON.stringify(config)).not.toContain("super-secret-key");
+    expect(JSON.stringify(config)).not.toContain("session-token-value");
+
+    (config.retry as { maxAttempts: number }).maxAttempts = 99;
+    expect(provider.getConfig().retry.maxAttempts).toBe(3);
+  });
+
+  it("leaves absent secrets absent in getConfig", () => {
+    const config = new BedrockProvider({}).getConfig();
+    expect(config.credentials.secretAccessKey).toBeUndefined();
+    expect(config.credentials.sessionToken).toBeUndefined();
+  });
+
   it("validates model options on construction", () => {
     expect(
       () => new BedrockProvider({ modelOptions: { dimensions: 999 } }),
