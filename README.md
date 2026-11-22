@@ -338,23 +338,24 @@ npx nachos-embeddings models [--json]                    # built-in profiles and
 npx nachos-embeddings info <model> [--dtype q8]          # describe a model id or local directory (no download)
 ```
 
-| Flag                                          | Applies to   | Description                                                                               |
-| --------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------- |
-| `--stdin`, `--json`                           | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output.      |
-| `--provider <name>`                           | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.                    |
-| `--model <id>`                                | all          | Transformers model name, or Bedrock model id.                                             |
-| `--region <region>`                           | bedrock      | AWS region (default `us-east-1`).                                                         |
-| `--cache-dir <dir>`                           | transformers | Model cache directory (default: per-user, see above).                                     |
-| `--dtype <type>`                              | transformers | Precision, e.g. `q8`. Appended to the reported model id.                                  |
-| `--type <t>`                                  | `embed`      | `query` or `document` (default). Selects the model's prefix. In `serve`, see below.       |
-| `--pooling <mode>`                            | transformers | `mean` or `cls`. Default per model.                                                       |
-| `--query-prefix <s>`, `--document-prefix <s>` | transformers | Override the model's prefixes (`""` disables).                                            |
-| `--max-length <n>`                            | transformers | Truncate to `n` tokens (can only lower the tokenizer limit).                              |
-| `--query <q>`                                 | `rerank`     | The query; also needs `--stdin --json`. Uses `--model`, `--dtype`, `--cache-dir`.         |
-| `--rerank-model <id>`, `--rerank-dtype <t>`   | `serve`      | Enable `op: "rerank"` (see Reranking). Also accepted by `rerank`.                         |
-| `--normalize`, `--no-normalize`               | transformers | L2-normalize vectors (default) or return raw pooled vectors.                              |
-| `--offline`                                   | transformers | Never use the network; fail if a model is not cached. Env: `NACHOS_EMBEDDINGS_OFFLINE=1`. |
-| `<model>`, `--kind embedding\|rerank`         | `pull`       | Download a model into the cache (see Privacy and offline use).                            |
+| Flag                                          | Applies to   | Description                                                                                                                   |
+| --------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `--stdin`, `--json`                           | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output.                                          |
+| `--provider <name>`                           | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.                                                        |
+| `--model <id>`                                | all          | Transformers model name, or Bedrock model id.                                                                                 |
+| `--region <region>`                           | bedrock      | AWS region (default `us-east-1`).                                                                                             |
+| `--cache-dir <dir>`                           | transformers | Model cache directory (default: per-user, see above).                                                                         |
+| `--dtype <type>`                              | transformers | Precision, e.g. `q8`. Appended to the reported model id.                                                                      |
+| `--type <t>`                                  | `embed`      | `query` or `document` (default). Selects the model's prefix. In `serve`, see below.                                           |
+| `--pooling <mode>`                            | transformers | `mean` or `cls`. Default per model.                                                                                           |
+| `--query-prefix <s>`, `--document-prefix <s>` | transformers | Override the model's prefixes (`""` disables).                                                                                |
+| `--max-length <n>`                            | transformers | Truncate to `n` tokens (can only lower the tokenizer limit).                                                                  |
+| `--query <q>`                                 | `rerank`     | The query; also needs `--stdin --json`. Uses `--model`, `--dtype`, `--cache-dir`.                                             |
+| `--rerank-model <id>`, `--rerank-dtype <t>`   | `serve`      | Enable `op: "rerank"` (see Reranking). Also accepted by `rerank`.                                                             |
+| `--rerank-max-length <n>`                     | `serve`      | The reranker's truncation length. `--max-length` stays with the embedding model; in `rerank` this defaults to `--max-length`. |
+| `--normalize`, `--no-normalize`               | transformers | L2-normalize vectors (default) or return raw pooled vectors.                                                                  |
+| `--offline`                                   | transformers | Never use the network; fail if a model is not cached. Env: `NACHOS_EMBEDDINGS_OFFLINE=1`.                                     |
+| `<model>`, `--kind embedding\|rerank`         | `pull`       | Download a model into the cache (see Privacy and offline use).                                                                |
 
 **`serve`** loads the provider once, then handles one request per stdin line, sequentially and in order. First stdout line:
 
