@@ -67,6 +67,19 @@
  *                        NACHOS_EMBEDDINGS_OFFLINE=1). Without it, a fully
  *                        cached model still loads with no network request; a
  *                        download happens only when files are missing.
+ *   models               subcommand: list the built-in model profiles (dims,
+ *                        licence, download size per dtype, pooling/prefixes)
+ *                        and the models in the cache. --json for machines.
+ *   info <model>         subcommand: describe a model id or a local directory
+ *                        without loading or downloading it (profile, cached
+ *                        files, architecture, dimension). `info` without an id
+ *                        keeps its old meaning (load the default provider).
+ *   --normalize          L2-normalize vectors (default) / --no-normalize for
+ *                        raw pooled vectors. A non-default value changes the
+ *                        reported model id.
+ *   <model> may also be a local directory (./dir, /abs/dir, ~/dir) holding
+ *                        config.json, tokenizer.json, tokenizer_config.json and
+ *                        the ONNX weights: fully offline.
  *   pull <model>         subcommand: download a model into the cache and print
  *                        {"pulled":true,"kind","model","cacheDir"}. Uses
  *                        --dtype/--cache-dir; --kind embedding|rerank overrides
@@ -121,6 +134,7 @@ function parseArgs(argv) {
     rerankModel: undefined,
     rerankDtype: undefined,
     kind: undefined,
+    normalize: undefined,
     offline: false,
     stdin: false,
     json: false,
@@ -179,6 +193,10 @@ function addPositionalArgument(args, argument) {
 
 function setBooleanFlag(args, argument) {
   const flag = argument?.slice(2);
+  if (flag === "normalize" || flag === "no-normalize") {
+    args.normalize = flag === "normalize";
+    return true;
+  }
   if (flag !== "stdin" && flag !== "json" && flag !== "offline") return false;
   args[flag] = true;
   return true;
@@ -231,6 +249,7 @@ async function makeTransformersProvider(args) {
     ...(queryPrefix !== undefined && { queryPrefix }),
     ...(documentPrefix !== undefined && { documentPrefix }),
     ...(args.maxLength !== undefined && { maxLength: args.maxLength }),
+    ...(args.normalize !== undefined && { normalize: args.normalize }),
     ...(args.offline && { offline: true }),
   });
   await provider.init();
@@ -241,12 +260,14 @@ const USAGE =
   "usage: nachos-embeddings embed --stdin --json [options]\n" +
   "       nachos-embeddings rerank --query <q> --stdin --json [options]\n" +
   "       nachos-embeddings pull <model> [--dtype <type>] [--kind embedding|rerank]\n" +
+  "       nachos-embeddings models [--json]\n" +
+  "       nachos-embeddings info <model> [--dtype <type>] [--json]\n" +
   "       nachos-embeddings serve [options]\n" +
   "       nachos-embeddings info [--json] [options]\n" +
   "options: [--provider transformers|bedrock] [--model <id>] [--region <r>]\n" +
   "         [--cache-dir <dir>] [--dtype <fp32|fp16|q8|q4|...>]\n" +
   "         [--type query|document] [--pooling mean|cls] [--max-length <tokens>]\n" +
-  "         [--query-prefix <text>] [--document-prefix <text>]\n" +
+  "         [--query-prefix <text>] [--document-prefix <text>] [--normalize|--no-normalize]\n" +
   "         [--offline]   never use the network (also NACHOS_EMBEDDINGS_OFFLINE=1)\n" +
   "serve:   [--rerank-model <id>] [--rerank-dtype <type>] enable op=rerank\n";
 
@@ -347,6 +368,8 @@ function embeddingSettings(provider) {
   for (const key of ["pooling", "queryPrefix", "documentPrefix", "maxLength"]) {
     if (config[key] !== undefined) settings[key] = config[key];
   }
+  // Only reported when it differs from the default (L2-normalized vectors).
+  if (config.normalize === false) settings.normalize = false;
   return settings;
 }
 
@@ -427,7 +450,36 @@ async function runServe(args) {
   await disposeProvider(provider);
 }
 
+async function resolveCacheDir(args) {
+  const { resolveDefaultCacheDir } =
+    await import("../dist/providers/transformers-provider.js");
+  return args.cacheDir ?? resolveDefaultCacheDir();
+}
+
+// `models`: built-in profiles plus what is cached. Reads the disk only.
+async function runModels(args) {
+  const { buildModelsReport, formatModelsText } =
+    await import("../dist/model-report.js");
+  const report = await buildModelsReport(await resolveCacheDir(args));
+  if (args.json) writeJson(report);
+  else process.stdout.write(formatModelsText(report));
+}
+
+// `info <model>`: what a model id is, without loading or downloading it.
+async function runModelInfo(args) {
+  const { inspectModel } = await import("../dist/model-cache.js");
+  const { formatInfoText } = await import("../dist/model-report.js");
+  const info = await inspectModel(args._[1], {
+    cacheDir: await resolveCacheDir(args),
+    ...(args.dtype && { dtype: args.dtype }),
+    ...(args.kind && { kind: args.kind === "rerank" ? "rerank" : "embedding" }),
+  });
+  if (args.json) writeJson(info);
+  else process.stdout.write(formatInfoText(info));
+}
+
 async function runInfo(args) {
+  if (args._[1] !== undefined) return runModelInfo(args);
   const provider = await makeProvider(args).catch((e) =>
     fail("init failed", e),
   );
@@ -471,6 +523,7 @@ async function main() {
   if (args._[0] === "info") return runInfo(args);
   if (args._[0] === "rerank") return runRerank(args);
   if (args._[0] === "pull") return runPull(args);
+  if (args._[0] === "models") return runModels(args);
   if (!isEmbedCommand(args)) return usageError();
 
   await runEmbedding(args);

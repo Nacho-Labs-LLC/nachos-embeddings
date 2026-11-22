@@ -248,6 +248,42 @@ The default `Xenova/all-MiniLM-L6-v2` is a fine general starter. For retrieval, 
 npx nachos-embeddings serve --model BAAI/bge-small-en-v1.5
 ```
 
+## Using any model
+
+The tested models above have built-in profiles, but any Hugging Face encoder with an ONNX export works for embeddings (a BERT, RoBERTa, XLM-R, DistilBERT, MPNet or ModernBERT-style model with an `onnx/` folder, which `Xenova/...` and `onnx-community/...` repositories provide), and any single-logit cross-encoder works for reranking. Pass its id as `model` / `--model`.
+
+**Explicit options always beat the built-in profile.** The profile only supplies defaults for the model ids it recognises.
+
+| Option (library / CLI)                                                  | What it overrides                                                                                                                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pooling` / `--pooling mean\|cls`                                       | The model's pooling (bge, arctic and gte-modernbert use `cls`; everything else `mean`).                                                                |
+| `queryPrefix`, `documentPrefix` / `--query-prefix`, `--document-prefix` | The trained prefixes. `""` switches a prefix off.                                                                                                      |
+| `maxLength` / `--max-length`                                            | Input length in tokens. Embedding models: only lowers the tokenizer limit. Rerankers: can raise it for models whose profile allows (jina, up to 8192). |
+| `dtype` / `--dtype`                                                     | Weights precision (`fp32`, `fp16`, `q8`, `int8`, `uint8`, `q4`, `q4f16`, `bnb4`); the hub repository must ship that file.                              |
+| `normalize` / `--normalize`, `--no-normalize`                           | L2 normalization of the output vector (default on). Off returns raw pooled vectors.                                                                    |
+
+A non-default `pooling`, `documentPrefix` or `normalize` is appended to `getModelId()`, because it changes stored vectors.
+
+**Local models.** A directory path works as the model: `--model ./my-model`, `/abs/dir`, `~/dir` or `file:///...` (a bare `org/name` is always a hub id). It needs `config.json`, `tokenizer.json`, `tokenizer_config.json` and the ONNX weights for the dtype, in `onnx/model[_quantized|_fp16|...].onnx` or at the top level (the layout `optimum-cli export onnx` writes). It loads with no network at all, whether or not `--offline` is set, and the reported model id is the absolute path. Built-in profiles match on the path text, so a directory named `my-bge-small-en-v1.5` picks up the bge profile; override as above for anything else.
+
+**Commands.**
+
+```bash
+npx nachos-embeddings models [--json]              # built-in profiles (dims, licence, download size per dtype, pooling/prefixes) and cached models
+npx nachos-embeddings info <model> [--dtype q8]    # what this model is: profile, cached files, architecture, dimension; never downloads
+npx nachos-embeddings pull <model> [--dtype q8]    # download it (see Privacy and offline use)
+```
+
+**Clear errors.** Failures name the cause and the fix instead of a raw Transformers.js message, and carry a stable `code` on `ModelLoadError` (`not-found`, `no-onnx-weights`, `unsupported-architecture`, `local-model-incomplete`):
+
+- no ONNX weights (for example `intfloat/e5-small-v2`, which has no `onnx/` folder): says which file is missing for the dtype, and suggests another `--dtype`, an ONNX repository, or exporting with `optimum-cli export onnx`;
+- unknown or private repository (the hub answers 401): says to check the id or set `HF_TOKEN`;
+- generative or encoder-decoder models (GPT-2, T5, Llama, ...): rejected from `config.json` before any weights are downloaded;
+- unsupported architecture in Transformers.js, or a config without `model_type`;
+- incomplete local directory: lists the missing files.
+
+A reranker must emit a single logit (`num_labels` 1); any other output shape is rejected with the shape in the message.
+
 ## Reranking
 
 A cross-encoder reads the query and one passage together and scores how well the passage answers it. It is more accurate than comparing embeddings but too slow to run over a whole corpus, so use it to re-score the top ~25 candidates of a first-stage search. The reranker is a separate model from the embedding model; a process can hold both, and nothing is downloaded or loaded until you ask for it.
@@ -298,6 +334,8 @@ npx nachos-embeddings serve                              # persistent JSON-lines
 npx nachos-embeddings info [--json]                      # provider, model, dimension, cache dir
 npx nachos-embeddings rerank --query <q> --stdin --json  # one passage per line in, one JSON array of scores out
 npx nachos-embeddings pull <model> [--dtype q8]          # pre-download a model for offline use
+npx nachos-embeddings models [--json]                    # built-in profiles and cached models
+npx nachos-embeddings info <model> [--dtype q8]          # describe a model id or local directory (no download)
 ```
 
 | Flag                                          | Applies to   | Description                                                                               |
@@ -314,6 +352,7 @@ npx nachos-embeddings pull <model> [--dtype q8]          # pre-download a model 
 | `--max-length <n>`                            | transformers | Truncate to `n` tokens (can only lower the tokenizer limit).                              |
 | `--query <q>`                                 | `rerank`     | The query; also needs `--stdin --json`. Uses `--model`, `--dtype`, `--cache-dir`.         |
 | `--rerank-model <id>`, `--rerank-dtype <t>`   | `serve`      | Enable `op: "rerank"` (see Reranking). Also accepted by `rerank`.                         |
+| `--normalize`, `--no-normalize`               | transformers | L2-normalize vectors (default) or return raw pooled vectors.                              |
 | `--offline`                                   | transformers | Never use the network; fail if a model is not cached. Env: `NACHOS_EMBEDDINGS_OFFLINE=1`. |
 | `<model>`, `--kind embedding\|rerank`         | `pull`       | Download a model into the cache (see Privacy and offline use).                            |
 

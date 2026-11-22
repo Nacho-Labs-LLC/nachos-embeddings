@@ -99,3 +99,25 @@ export {
   getRerankerProfile,
   type RerankerProfile,
 } from "./providers/reranker-profiles.js";
+
+// Model catalogue and inspection
+export {
+  MODEL_CATALOG,
+  findCatalogEntry,
+  profileFor,
+  type CatalogEntry,
+  type EffectiveProfile,
+  type ModelKind,
+} from "./providers/model-catalog.js";
+export {
+  listCachedModels,
+  inspectModel,
+  type CachedModel,
+  type ModelInfo,
+} from "./model-cache.js";
+export {
+  ModelLoadError,
+  isLocalModelPath,
+  resolveModelRef,
+  type ModelErrorCode,
+} from "./providers/model-loading.js";

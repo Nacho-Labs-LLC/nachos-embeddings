@@ -8,10 +8,15 @@ const { mockPipeline, mockEnv, mockDispose } = vi.hoisted(() => ({
 
 vi.mock("@huggingface/transformers", () => ({
   pipeline: mockPipeline,
+  AutoConfig: {
+    from_pretrained: () => Promise.resolve({ model_type: "bert" }),
+  },
   env: mockEnv,
 }));
 
+import { resolve as resolvePath } from "node:path";
 import {
+  layerNorm,
   layerNormThenNormalize,
   TransformersProvider,
   resolveDefaultCacheDir,
@@ -479,6 +484,80 @@ describe("TransformersProvider prefixes, pooling and batching", () => {
       pooling: "cls",
       normalize: true,
     });
+  });
+});
+
+describe("explicit overrides beat built-in profiles", () => {
+  async function load(
+    config: ConstructorParameters<typeof TransformersProvider>[0],
+  ) {
+    const provider = new TransformersProvider(config);
+    await provider.init();
+    const extractor = (await mockPipeline.mock.results.at(-1)!
+      .value) as ReturnType<typeof makeExtractor>;
+    return { provider, extractor };
+  }
+
+  it("pooling, both prefixes, dtype and max length all win over the bge profile", async () => {
+    const { provider, extractor } = await load({
+      model: "BAAI/bge-small-en-v1.5",
+      pooling: "mean",
+      queryPrefix: "Q: ",
+      documentPrefix: "D: ",
+      dtype: "q8",
+      maxLength: 32,
+    });
+    await provider.embed("x", { type: "query" });
+    await provider.embed("y");
+    expect(extractor.mock.calls[0]).toEqual([
+      "Q: x",
+      { pooling: "mean", normalize: true },
+    ]);
+    expect(extractor.mock.calls[1]?.[0]).toBe("D: y");
+    expect(mockPipeline).toHaveBeenLastCalledWith(
+      "feature-extraction",
+      "BAAI/bge-small-en-v1.5",
+      expect.objectContaining({ dtype: "q8" }),
+    );
+    expect(provider.getConfig()).toMatchObject({
+      pooling: "mean",
+      queryPrefix: "Q: ",
+      documentPrefix: "D: ",
+      dtype: "q8",
+      maxLength: 32,
+    });
+  });
+
+  it("normalize: false skips L2 normalization and changes the model id", async () => {
+    const { provider, extractor } = await load({ normalize: false });
+    expect(provider.getConfig().normalize).toBe(false);
+    await provider.embed("abcd");
+    expect(extractor.mock.calls[0]?.[1]).toEqual({
+      pooling: "mean",
+      normalize: false,
+    });
+    expect(provider.getModelId()).toBe(
+      `${TRANSFORMERS_DEFAULT_MODEL}:normalize=false`,
+    );
+    expect(new TransformersProvider().getConfig().normalize).toBe(true);
+    expect(new TransformersProvider().getModelId()).toBe(
+      TRANSFORMERS_DEFAULT_MODEL,
+    );
+  });
+
+  it("normalize: false on a layer-norm model keeps the layer norm but not the L2 step", async () => {
+    const { provider } = await load({
+      model: "nomic-ai/nomic-embed-text-v1.5",
+      normalize: false,
+    });
+    const vec = await provider.embed("abcd");
+    expect(vec).toEqual(layerNorm([21, 0.5, 0.25]));
+    expect(Math.hypot(...vec)).not.toBeCloseTo(1, 3);
+  });
+
+  it("resolves a local directory model to an absolute path", () => {
+    const provider = new TransformersProvider({ model: "./some/model-dir" });
+    expect(provider.getConfig().model).toBe(resolvePath("./some/model-dir"));
   });
 });
 

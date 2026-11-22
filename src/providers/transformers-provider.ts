@@ -9,7 +9,7 @@ import {
   type FeatureExtractionPipeline,
 } from "@huggingface/transformers";
 import { isOfflineEnv } from "../offline.js";
-import { loadModel } from "./model-loading.js";
+import { loadModel, resolveModelRef } from "./model-loading.js";
 import type {
   EmbeddingProvider,
   BaseProviderConfig,
@@ -116,6 +116,14 @@ export interface TransformersProviderConfig extends BaseProviderConfig {
   maxLength?: number;
 
   /**
+   * L2-normalize output vectors (default true, which cosine similarity and
+   * the dot-product `VectorStore` expect). Turn off only for models or
+   * downstream code that want raw pooled vectors. Changing it changes stored
+   * vectors, so a non-default value is appended to the model id.
+   */
+  normalize?: boolean;
+
+  /**
    * Never touch the network: load only from the cache and fail with
    * `ModelNotCachedError` if the model is not there. Default: true when
    * `NACHOS_EMBEDDINGS_OFFLINE=1`, else false. Even when false, a model that
@@ -156,6 +164,13 @@ function withMaxLength(
  * normalization, as nomic-embed-text-v1.5's card prescribes after pooling.
  */
 export function layerNormThenNormalize(row: ArrayLike<number>): number[] {
+  const out = layerNorm(row);
+  const norm = Math.hypot(...out) || 1;
+  return out.map((x) => x / norm);
+}
+
+/** Parameter-free layer norm (torch default eps 1e-5), without L2 normalization. */
+export function layerNorm(row: ArrayLike<number>): number[] {
   const n = row.length;
   let mean = 0;
   for (let i = 0; i < n; i++) mean += row[i] as number;
@@ -163,9 +178,7 @@ export function layerNormThenNormalize(row: ArrayLike<number>): number[] {
   let variance = 0;
   for (let i = 0; i < n; i++) variance += ((row[i] as number) - mean) ** 2;
   const scale = 1 / Math.sqrt(variance / n + 1e-5);
-  const out = Array.from(row, (x) => (x - mean) * scale);
-  const norm = Math.hypot(...out) || 1;
-  return out.map((x) => x / norm);
+  return Array.from(row, (x) => (x - mean) * scale);
 }
 
 function validateConfig(config: TransformersProviderConfig): void {
@@ -200,13 +213,15 @@ export class TransformersProvider implements EmbeddingProvider {
 
   constructor(config: TransformersProviderConfig = {}) {
     validateConfig(config);
-    const model = config.model ?? TRANSFORMERS_DEFAULT_MODEL;
+    // A local directory path is resolved to an absolute path.
+    const model = resolveModelRef(config.model ?? TRANSFORMERS_DEFAULT_MODEL);
     const profile = getModelProfile(model);
     this.config = {
       model,
       cacheDir: config.cacheDir ?? resolveDefaultCacheDir(),
       progressLogging: config.progressLogging ?? false,
       offline: config.offline ?? isOfflineEnv(),
+      normalize: config.normalize ?? true,
       pooling: config.pooling ?? profile.pooling,
       queryPrefix: config.queryPrefix ?? profile.queryPrefix,
       documentPrefix: config.documentPrefix ?? profile.documentPrefix,
@@ -266,14 +281,13 @@ export class TransformersProvider implements EmbeddingProvider {
   private callOptions() {
     return {
       pooling: this.config.pooling,
-      normalize: !this.defaults.layerNorm,
+      normalize: this.config.normalize && !this.defaults.layerNorm,
     };
   }
 
   private finish(row: Float32Array): number[] {
-    return this.defaults.layerNorm
-      ? layerNormThenNormalize(row)
-      : Array.from(row);
+    if (!this.defaults.layerNorm) return Array.from(row);
+    return this.config.normalize ? layerNormThenNormalize(row) : layerNorm(row);
   }
 
   async embed(text: string, options?: EmbedOptions): Promise<number[]> {
@@ -341,13 +355,14 @@ export class TransformersProvider implements EmbeddingProvider {
    * (e.g. `Xenova/all-MiniLM-L6-v2:q8`) so consumers re-embed on change.
    */
   getModelId(): string {
-    const { model, dtype, pooling, documentPrefix } = this.config;
+    const { model, dtype, pooling, documentPrefix, normalize } = this.config;
     let id =
       dtype && dtype !== "fp32" && dtype !== "auto"
         ? `${model}:${dtype}`
         : model;
     // Overrides that change stored (document) vectors also change the id.
     if (pooling !== this.defaults.pooling) id += `:pooling=${pooling}`;
+    if (!normalize) id += ":normalize=false";
     if (documentPrefix !== this.defaults.documentPrefix) {
       id += `:docprefix=${JSON.stringify(documentPrefix)}`;
     }

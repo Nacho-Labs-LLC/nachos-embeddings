@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -684,6 +685,90 @@ describe("nachos-embeddings CLI", () => {
       expect(offline.stdout).toBe("");
       expect(offline.stderr).toContain("pull needs network access");
       expect(offline.providers).toEqual([]);
+    });
+  });
+
+  describe("models, info <model> and --normalize", () => {
+    const cacheDir = () => {
+      const directory = mkdtempSync(join(tmpdir(), "nachos-cli-cache-"));
+      temporaryPaths.push(directory);
+      return directory;
+    };
+
+    it("--no-normalize and --normalize are forwarded to the embedder", () => {
+      const off = runCli(
+        ["embed", "--stdin", "--json", "--no-normalize"],
+        "a\n",
+      );
+      expect(off.providers[0].options).toEqual({ normalize: false });
+      const on = runCli(["embed", "--stdin", "--json", "--normalize"], "a\n");
+      expect(on.providers[0].options).toEqual({ normalize: true });
+      expect(
+        runCli(["embed", "--stdin", "--json"], "a\n").providers[0].options,
+      ).toEqual({});
+    });
+
+    it("models lists built-in profiles and cached models as JSON", () => {
+      const dir = cacheDir();
+      mkdirSync(join(dir, "org", "cached-model", "onnx"), { recursive: true });
+      writeFileSync(
+        join(dir, "org", "cached-model", "config.json"),
+        '{"model_type":"bert","hidden_size":16}',
+      );
+      writeFileSync(
+        join(dir, "org", "cached-model", "onnx", "model_quantized.onnx"),
+        "x",
+      );
+      const result = runCli(["models", "--json", "--cache-dir", dir]);
+      expect(result.status).toBe(0);
+      const report = JSON.parse(result.stdout);
+      expect(report.cacheDir).toBe(dir);
+      expect(report.builtin.map((m: { id: string }) => m.id)).toContain(
+        "Alibaba-NLP/gte-modernbert-base",
+      );
+      expect(report.cached).toMatchObject([
+        {
+          id: "org/cached-model",
+          kind: "embedding",
+          dtypes: ["q8"],
+          dimension: 16,
+        },
+      ]);
+      expect(result.providers).toEqual([]);
+    });
+
+    it("models prints a readable table by default", () => {
+      const result = runCli(["models", "--cache-dir", cacheDir()]);
+      expect(result.stdout).toContain("Built-in profiles");
+      expect(result.stdout).toContain("gte-modernbert-base");
+      expect(result.stdout).toContain("(none)");
+    });
+
+    it("info <model> describes a model without loading it", () => {
+      const result = runCli([
+        "info",
+        "Xenova/all-MiniLM-L6-v2",
+        "--dtype",
+        "q8",
+        "--json",
+        "--cache-dir",
+        cacheDir(),
+      ]);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        id: "Xenova/all-MiniLM-L6-v2",
+        kind: "embedding",
+        cached: false,
+        dimension: 384,
+        profile: { pooling: "mean" },
+      });
+      expect(result.providers).toEqual([]);
+    });
+
+    it("info without a model keeps loading the provider", () => {
+      const result = runCli(["info", "--json"]);
+      expect(JSON.parse(result.stdout).provider).toBe("transformers");
+      expect(result.providers).toHaveLength(1);
     });
   });
 });

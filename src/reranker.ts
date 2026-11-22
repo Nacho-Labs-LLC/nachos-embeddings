@@ -20,7 +20,7 @@ import {
   resolveDefaultCacheDir,
   type TransformersDtype,
 } from "./providers/transformers-provider.js";
-import { loadModel } from "./providers/model-loading.js";
+import { loadModel, resolveModelRef } from "./providers/model-loading.js";
 import { getRerankerProfile } from "./providers/reranker-profiles.js";
 import { isOfflineEnv } from "./offline.js";
 
@@ -145,7 +145,7 @@ export class Reranker {
 
   constructor(options: RerankOptions = {}) {
     validate(options);
-    const model = options.model ?? RERANK_DEFAULT_MODEL;
+    const model = resolveModelRef(options.model ?? RERANK_DEFAULT_MODEL);
     const profile = getRerankerProfile(model);
     this.config = {
       model,

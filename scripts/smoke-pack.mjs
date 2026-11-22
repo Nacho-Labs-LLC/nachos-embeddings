@@ -18,6 +18,7 @@ import {
   mkdirSync,
   existsSync,
   readFileSync,
+  cpSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -258,6 +259,71 @@ function checkNoNetwork(cli, env, workDir) {
   );
 }
 
+/**
+ * A local model directory works with no network and gives the same vectors as
+ * the hub copy it was made from; models that cannot work fail with a clear
+ * message (checked against the real hub).
+ */
+function checkLocalAndErrors(cli, env, workDir, cacheDir) {
+  const local = join(workDir, "local-model");
+  cpSync(join(cacheDir, "Xenova", "all-MiniLM-L6-v2"), local, {
+    recursive: true,
+  });
+  const log = join(workDir, "local-network.log");
+  const blocker = join(repoRoot, "scripts", "block-network.mjs");
+  const embed = (model) =>
+    run(
+      process.execPath,
+      [
+        "--import",
+        blocker,
+        cli,
+        "embed",
+        "--stdin",
+        "--json",
+        "--model",
+        model,
+        "--offline",
+      ],
+      {
+        env: { ...env, BLOCK_NETWORK_LOG: log },
+        input: "hello world\n",
+        timeout: MODEL_TIMEOUT_MS,
+      },
+    );
+  const fromDir = embed(local);
+  const fromHub = embed("Xenova/all-MiniLM-L6-v2");
+  const attempts = existsSync(log) ? readFileSync(log, "utf8").trim() : "";
+  check(
+    fromDir.status === 0 &&
+      fromDir.stdout === fromHub.stdout &&
+      attempts === "",
+    `local model directory matches the hub copy with no network (exit ${fromDir.status} ${fromDir.stderr.slice(0, 200)}${attempts ? `, attempts: ${attempts}` : ""})`,
+  );
+  const pull = (model) =>
+    run(process.execPath, [cli, "pull", model, "--dtype", "q8"], {
+      env,
+      timeout: MODEL_TIMEOUT_MS,
+    });
+  const noOnnx = pull("intfloat/e5-small-v2");
+  check(
+    noOnnx.status === 2 && noOnnx.stderr.includes("no ONNX weights"),
+    `pull of a repo without ONNX weights fails clearly (exit ${noOnnx.status}: ${noOnnx.stderr.slice(0, 160)})`,
+  );
+  const missing = pull("nobody-at-all/does-not-exist-xyz");
+  check(
+    missing.status === 2 &&
+      missing.stderr.includes("not found on the Hugging Face hub"),
+    `pull of an unknown model fails clearly (exit ${missing.status}: ${missing.stderr.slice(0, 160)})`,
+  );
+  const decoder = pull("openai-community/gpt2");
+  check(
+    decoder.status === 2 &&
+      decoder.stderr.includes("cannot produce sentence embeddings"),
+    `pull of a generative model fails clearly (exit ${decoder.status}: ${decoder.stderr.slice(0, 160)})`,
+  );
+}
+
 async function main() {
   const workDir = mkdtempSync(join(tmpdir(), "nachos-smoke-"));
   try {
@@ -276,6 +342,7 @@ async function main() {
       await checkServe(cli, env, info.dimension);
       checkRerank(cli, env);
       checkNoNetwork(cli, env, workDir);
+      checkLocalAndErrors(cli, env, workDir, cacheDir);
     } else {
       console.log(
         "skip model checks (set SMOKE_MODEL=1 to run info/embed/serve/rerank)",

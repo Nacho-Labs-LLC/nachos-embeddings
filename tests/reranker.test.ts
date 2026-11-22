@@ -32,6 +32,9 @@ vi.mock("@huggingface/transformers", () => {
       allowRemoteModels: true,
       localModelPath: "./models/",
     },
+    AutoConfig: {
+      from_pretrained: () => Promise.resolve({ model_type: "bert" }),
+    },
     AutoTokenizer: {
       from_pretrained: (id: string, options: Record<string, unknown>) => {
         calls.loads.push({ id, options });
