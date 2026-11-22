@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.7.0
+
+Adds query/document input types with per-model prefixes and pooling, more model profiles, a local cross-encoder reranker, offline mode, and customizable models. Everything new is additive except the vector changes listed under "Migration from 0.6.x".
+
+### Migration from 0.6.x
+
+Checked against `git diff origin/master..HEAD -- src bin` (master being the published 0.6.0).
+
+- **Vectors change for e5, bge and nomic models. Re-index stores built with them.** 0.6.0 embedded every text the same way (mean pooling, no prefix). Now e5 documents carry `passage: ` (and queries `query: `), nomic documents carry `search_document: ` (queries `search_query: `) and nomic applies the layer norm its card prescribes (cosine about 0.9999 to the previous vectors, plus the prefix change), and bge models switch to cls pooling with the retrieval instruction on queries. MiniLM (the default) and unknown models are unchanged. `SemanticSearch` now embeds documents as `"document"` and `search()` queries as `"query"`, so the query side of a store changes too. Pass `queryPrefix: ""`, `documentPrefix: ""` and `pooling: "mean"` to reproduce 0.6.0 vectors for a model.
+- **`serve --max-length` no longer applies to the reranker.** In `serve`, `--max-length` is for the embedding model only; the reranker has its own `--rerank-max-length`. (`rerank` still falls back to `--max-length`.)
+- **`getModelId()` can differ.** It now appends overrides that change vectors (`:pooling=...`, a document prefix, `normalize=false`), so a store keyed on the id sees a new id when you set those.
+- **Model loading is cache-first.** A fully cached model now loads with no network request; files are downloaded only when missing. Before, Transformers.js asked the hub on every load.
+- **`EmbeddingProvider.embed/embedBatch` take an optional second `EmbedOptions` argument.** Existing custom providers keep compiling and ignore it.
+- **`serve` ready line and `info` gain optional fields** (`version`, `pooling`, `queryPrefix`, `documentPrefix`, `maxLength`, `normalize`, `rerank`, `offline`). Existing readers that ignore unknown keys are unaffected. Requests may also carry `type` or `op: "rerank"`.
+- **Model ids that look like paths** (`./dir`, `/abs/dir`, `~/dir`, `file://...`) are now loaded as local directories instead of being sent to the hub.
+- **Version detection.** The 0.6.0 CLI has no `--version` and no `version` in the ready line. Clients can treat a CLI without them as older than 0.7.0.
+
+### Added
+
+- CLI `--version` prints the package version (exit 0), and the `serve` ready line carries `"version"`, so clients can tell a 0.7.0+ CLI from an older one that has neither.
+- Query/document input types: `embed(text, { type })` and `embedBatch(texts, { type })` (`"query"` or `"document"`, default `"document"`), CLI `embed --type`, and an optional per-request `"type"` in `serve` (requests without it behave as before). `SemanticSearch` embeds documents as `"document"` and `search()` queries as `"query"`.
+- Built-in per-model prefix and pooling table (e5: `query: ` / `passage: `; bge-*-en-v1.5: cls pooling and the retrieval instruction on queries; nomic-embed-text-v1.5: `search_query: ` / `search_document: `; MiniLM and unknown models: none, mean), overridable with `queryPrefix`, `documentPrefix`, `pooling` options and `--query-prefix`, `--document-prefix`, `--pooling`. Exports `getModelProfile`, `POOLING_MODES`, `INPUT_TYPES` and the `EmbedOptions`, `PoolingMode`, `InputType`, `ModelProfile` types. Overrides that change document vectors are appended to `getModelId()`.
+- Prefix/pooling profiles for `snowflake-arctic-embed-*` (cls; `Represent this sentence for searching relevant passages: ` on queries, or `query: ` for the v2.0 models) and `gte-modernbert-base` (cls, no prefixes), checked against their model cards. `nomic-embed-text-v1.5` now applies the card's layer norm between mean pooling and L2 normalization (vectors change slightly, cosine about 0.9999 to the previous ones).
+- `maxLength` option and `--max-length` to truncate inputs to fewer tokens than the tokenizer limit (which still applies; the default is unchanged).
+- `info` and the `serve` ready line report `pooling`, `queryPrefix`, `documentPrefix` (and `maxLength` when set) for the transformers provider; new optional fields only.
+- Optional local cross-encoder reranker: `rerank(query, passages, { model, dtype, maxLength, cacheDir })` and the `Reranker` class return one score per passage in input order (`sigmoid(logit)`, in (0, 1)). Default `jinaai/jina-reranker-v1-tiny-en` at q8 (about 35 MB; loads in Transformers.js without remote code), documented fallback `Xenova/ms-marco-MiniLM-L-6-v2` (about 24.5 MB). It is lazy, separate from the embedding model, truncates pairs at `maxLength` tokens (see profiles below) and scores in length-sorted chunks of 8. Exports `Reranker`, `rerank`, `disposeRerankers`, `RERANK_DEFAULT_MODEL`, `RERANK_FALLBACK_MODEL`, `RERANK_DEFAULT_DTYPE`, `RERANK_DEFAULT_MAX_LENGTH`.
+- CLI `rerank --query <q> --stdin --json` (one passage per line, prints one JSON array of scores). `serve --rerank-model/--rerank-dtype` accepts `{"id","op":"rerank","query","passages"}` and replies `{"id","scores"}`, and adds `"rerank":{"model"}` to the ready line only when enabled; requests without `op` and a `serve` without the flags are unchanged and load no reranker.
+- Offline and privacy: a model whose files are all cached now loads with zero network requests, for embedding and reranker models. Transformers.js 4 otherwise asks the hub which tokenizer files exist on every load, even when cached. Files are downloaded only when missing. New `offline` option (embedder, `TransformersProvider`, `Reranker`, `rerank()`), CLI `--offline` and `NACHOS_EMBEDDINGS_OFFLINE=1` never touch the network and fail with `ModelNotCachedError` (naming the missing files and the `pull` fix) when a model is not cached; `serve` reports `"offline": true` in the ready line only when on, and `--provider bedrock` refuses to run offline. New `nachos-embeddings pull <model> [--dtype] [--cache-dir] [--kind embedding|rerank]` pre-downloads a model for air-gapped setups. Exports `ModelNotCachedError`, `isOfflineEnv`, `OFFLINE_ENV_VAR`.
+- Reranker profiles (`getRerankerProfile`): `jinaai/jina-reranker-v1-tiny-en` has ALiBi positions, so its tokenizer limit is raised and `maxLength` defaults to 1024 (up to 8192; scores for short inputs are unchanged). Models without a profile (MiniLM) stay at 512, because their graph fails above that. `--max-length` applies to `rerank` and `pull`.
+- Customizable models: any Hugging Face ONNX encoder or single-logit cross-encoder works, with explicit `pooling`, `queryPrefix`, `documentPrefix`, `maxLength`, `dtype` and the new `normalize` option (`--normalize` / `--no-normalize`) always beating the built-in profile. A local model directory (`./dir`, `/abs/dir`, `~/dir`, `file://`; ONNX in `onnx/` or at the top level) loads fully offline.
+- New `models [--json]` command (built-in profiles with dimension, licence, download size per dtype and pooling/prefixes, plus cached models) and `info <model>` (profile, cached files, architecture and dimension without downloading; `info` with no id is unchanged). Exports `MODEL_CATALOG`, `findCatalogEntry`, `profileFor`, `listCachedModels`, `inspectModel`.
+- `serve --rerank-max-length <n>` gives the reranker its own truncation length. Before, `--max-length` was applied to both the embedding model and the reranker in `serve`; it now applies to the embedding model only (`rerank` still falls back to `--max-length`).
+- Clear model errors: `ModelLoadError` with codes `not-found`, `no-onnx-weights`, `unsupported-architecture` and `local-model-incomplete`. Generative and encoder-decoder models are rejected from `config.json` before any weights are downloaded.
+- README: recommended retrieval models (bge-small-en-v1.5, e5-small-v2, nomic-embed-text-v1.5) with download sizes.
+
+### Changed
+
+- Transformers `embedBatch` now makes one padded pipeline call per chunk of 8 texts (length-sorted, results in input order) instead of concurrent single-text calls: 1.0x to 1.8x faster in a CPU benchmark, vectors match single calls (cosine > 0.999).
+- `info` and the `serve` ready line report the active pooling and prefixes for the transformers provider.
+- Tests no longer depend on the real model cache: provider tests use a tiny local model fixture, and a network blocker (`scripts/block-network.mjs`) backs the offline tests. The packed-tarball smoke test (`SMOKE_MODEL=1`) also covers `rerank`, `serve` ops and offline loading.
+
 ## 0.6.0
 
 **Breaking / migration.** Most changes are backward compatible, but four behaviours differ. See "Migrating from 0.5.x" in the README.

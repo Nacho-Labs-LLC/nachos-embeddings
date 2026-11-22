@@ -3,7 +3,7 @@
  * Smoke test of the packed npm tarball.
  *
  * Packs the package, extracts it, checks the file list and the executable
- * bit, then runs the extracted CLI. Model-backed checks (info, embed, serve)
+ * bit, then runs the extracted CLI. Model-backed checks (info, embed, serve, rerank)
  * only run when SMOKE_MODEL=1; point NACHOS_EMBEDDINGS_CACHE at a persistent
  * directory to reuse a downloaded model.
  *
@@ -11,7 +11,15 @@
  * verifies the tarball's own files, not its dependency resolution.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, mkdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  cpSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -172,6 +180,150 @@ function checkServe(cli, env, dimension) {
   });
 }
 
+function checkRerank(cli, env) {
+  const passages = [
+    "New York City is famous for the Metropolitan Museum of Art.",
+    "Berlin has a population of 3,520,031 registered inhabitants.",
+    "",
+  ];
+  const result = run(
+    process.execPath,
+    [
+      cli,
+      "rerank",
+      "--query",
+      "How many people live in Berlin?",
+      "--stdin",
+    ].concat("--json"),
+    { env, input: passages.join("\n") + "\n", timeout: MODEL_TIMEOUT_MS },
+  );
+  check(
+    result.status === 0,
+    `rerank exits 0 (got ${result.status}) ${result.stderr.slice(0, 300)}`,
+  );
+  const scores = JSON.parse(result.stdout.trim() || "[]");
+  check(
+    scores.length === 3 && scores[1] > scores[0] && scores[1] > scores[2],
+    `rerank scores the relevant passage highest (${scores.map((x) => x.toFixed?.(3))})`,
+  );
+}
+
+/**
+ * The model files are cached by now (the checks above downloaded them), so
+ * further runs must make no network request at all. Proof: each command runs
+ * with scripts/block-network.mjs preloaded, which makes every socket connect
+ * and DNS lookup throw and logs it. Any attempt fails the command and shows
+ * up in the log. Runs both without --offline (the default cache-first path)
+ * and with it.
+ */
+function checkNoNetwork(cli, env, workDir) {
+  const log = join(workDir, "network-attempts.log");
+  const blocker = join(repoRoot, "scripts", "block-network.mjs");
+  const blockedEnv = { ...env, BLOCK_NETWORK_LOG: log };
+  const commands = [
+    [["embed", "--stdin", "--json"], "hello\nworld\n"],
+    [["rerank", "--query", "q", "--stdin", "--json"], "a\nb\n"],
+    [["embed", "--stdin", "--json", "--offline"], "hello\n"],
+    [["rerank", "--query", "q", "--stdin", "--json", "--offline"], "a\n"],
+  ];
+  for (const [args, input] of commands) {
+    const result = run(process.execPath, ["--import", blocker, cli, ...args], {
+      env: blockedEnv,
+      input,
+      timeout: MODEL_TIMEOUT_MS,
+    });
+    const attempts = existsSync(log) ? readFileSync(log, "utf8").trim() : "";
+    check(
+      result.status === 0 && attempts === "",
+      `${args.join(" ")}: cached run makes no network requests (exit ${result.status}${attempts ? `, attempts: ${attempts}` : ""})`,
+    );
+  }
+  const missing = run(
+    process.execPath,
+    [
+      cli,
+      "embed",
+      "--stdin",
+      "--json",
+      "--offline",
+      "--cache-dir",
+      join(workDir, "empty-cache"),
+    ],
+    { env: blockedEnv, input: "hi\n", timeout: MODEL_TIMEOUT_MS },
+  );
+  check(
+    missing.status === 2 &&
+      missing.stderr.includes("not in the cache") &&
+      missing.stderr.includes("nachos-embeddings pull"),
+    "--offline with an empty cache fails clearly and makes no request",
+  );
+}
+
+/**
+ * A local model directory works with no network and gives the same vectors as
+ * the hub copy it was made from; models that cannot work fail with a clear
+ * message (checked against the real hub).
+ */
+function checkLocalAndErrors(cli, env, workDir, cacheDir) {
+  const local = join(workDir, "local-model");
+  cpSync(join(cacheDir, "Xenova", "all-MiniLM-L6-v2"), local, {
+    recursive: true,
+  });
+  const log = join(workDir, "local-network.log");
+  const blocker = join(repoRoot, "scripts", "block-network.mjs");
+  const embed = (model) =>
+    run(
+      process.execPath,
+      [
+        "--import",
+        blocker,
+        cli,
+        "embed",
+        "--stdin",
+        "--json",
+        "--model",
+        model,
+        "--offline",
+      ],
+      {
+        env: { ...env, BLOCK_NETWORK_LOG: log },
+        input: "hello world\n",
+        timeout: MODEL_TIMEOUT_MS,
+      },
+    );
+  const fromDir = embed(local);
+  const fromHub = embed("Xenova/all-MiniLM-L6-v2");
+  const attempts = existsSync(log) ? readFileSync(log, "utf8").trim() : "";
+  check(
+    fromDir.status === 0 &&
+      fromDir.stdout === fromHub.stdout &&
+      attempts === "",
+    `local model directory matches the hub copy with no network (exit ${fromDir.status} ${fromDir.stderr.slice(0, 200)}${attempts ? `, attempts: ${attempts}` : ""})`,
+  );
+  const pull = (model) =>
+    run(process.execPath, [cli, "pull", model, "--dtype", "q8"], {
+      env,
+      timeout: MODEL_TIMEOUT_MS,
+    });
+  const noOnnx = pull("intfloat/e5-small-v2");
+  check(
+    noOnnx.status === 2 && noOnnx.stderr.includes("no ONNX weights"),
+    `pull of a repo without ONNX weights fails clearly (exit ${noOnnx.status}: ${noOnnx.stderr.slice(0, 160)})`,
+  );
+  const missing = pull("nobody-at-all/does-not-exist-xyz");
+  check(
+    missing.status === 2 &&
+      missing.stderr.includes("not found on the Hugging Face hub"),
+    `pull of an unknown model fails clearly (exit ${missing.status}: ${missing.stderr.slice(0, 160)})`,
+  );
+  const decoder = pull("openai-community/gpt2");
+  check(
+    decoder.status === 2 &&
+      decoder.stderr.includes("cannot produce sentence embeddings"),
+    `pull of a generative model fails clearly (exit ${decoder.status}: ${decoder.stderr.slice(0, 160)})`,
+  );
+}
+
 async function main() {
   const workDir = mkdtempSync(join(tmpdir(), "nachos-smoke-"));
   try {
@@ -188,9 +340,12 @@ async function main() {
       const info = checkInfo(cli, env, cacheDir);
       checkEmbed(cli, env, info.dimension);
       await checkServe(cli, env, info.dimension);
+      checkRerank(cli, env);
+      checkNoNetwork(cli, env, workDir);
+      checkLocalAndErrors(cli, env, workDir, cacheDir);
     } else {
       console.log(
-        "skip model checks (set SMOKE_MODEL=1 to run info/embed/serve)",
+        "skip model checks (set SMOKE_MODEL=1 to run info/embed/serve/rerank)",
       );
     }
   } finally {

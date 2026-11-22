@@ -8,27 +8,49 @@ const { mockPipeline, mockEnv, mockDispose } = vi.hoisted(() => ({
 
 vi.mock("@huggingface/transformers", () => ({
   pipeline: mockPipeline,
+  AutoConfig: {
+    from_pretrained: () => Promise.resolve({ model_type: "bert" }),
+  },
   env: mockEnv,
 }));
 
+import { resolve as resolvePath } from "node:path";
 import {
+  layerNorm,
+  layerNormThenNormalize,
   TransformersProvider,
   resolveDefaultCacheDir,
   TRANSFORMERS_DEFAULT_MODEL,
   TRANSFORMERS_DEFAULT_DIMENSION,
 } from "../../src/providers/transformers-provider.js";
 
+type ExtractorCall = (
+  input: string | string[],
+  options?: unknown,
+) => Promise<{ data: Float32Array; dims: number[] }>;
+type TokenizerCall = (texts: unknown, options?: unknown) => object;
+
+/** Fake feature-extraction pipeline: one row `[length, 0.5, 0.25]` per text. */
 function makeExtractor() {
-  const extractor = vi.fn(async (text: string) => ({
-    data: new Float32Array([text.length, 0.5, 0.25]),
-  }));
-  return Object.assign(extractor, { dispose: mockDispose });
+  const extractor = vi.fn<ExtractorCall>(async (input) => {
+    const texts = Array.isArray(input) ? input : [input];
+    return {
+      data: new Float32Array(texts.flatMap((t) => [t.length, 0.5, 0.25])),
+      dims: [texts.length, 3],
+    };
+  });
+  return Object.assign(extractor, {
+    dispose: mockDispose,
+    tokenizer: vi.fn<TokenizerCall>(() => ({})),
+  });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("NACHOS_EMBEDDINGS_CACHE", "");
-  vi.stubEnv("XDG_CACHE_HOME", "");
+  // Point the default cache at a directory that does not exist, so a model
+  // cached in the developer's real ~/.cache cannot change the load path.
+  vi.stubEnv("XDG_CACHE_HOME", "/nonexistent-nachos-test-cache");
   mockPipeline.mockImplementation(async () => makeExtractor());
 });
 
@@ -287,5 +309,269 @@ describe("TransformersProvider", () => {
     const init = provider.init().catch(() => undefined);
     await expect(provider.dispose()).resolves.toBeUndefined();
     await init;
+  });
+});
+
+describe("TransformersProvider prefixes, pooling and batching", () => {
+  async function load(
+    config: ConstructorParameters<typeof TransformersProvider>[0],
+  ) {
+    const provider = new TransformersProvider(config);
+    await provider.init();
+    const extractor = (await mockPipeline.mock.results.at(-1)!
+      .value) as ReturnType<typeof makeExtractor>;
+    return { provider, extractor };
+  }
+
+  it("defaults to document type, mean pooling and no prefix for MiniLM", async () => {
+    const { provider, extractor } = await load({});
+    expect(provider.getConfig()).toMatchObject({
+      pooling: "mean",
+      queryPrefix: "",
+      documentPrefix: "",
+    });
+    await provider.embed("abc");
+    expect(extractor).toHaveBeenCalledWith("abc", {
+      pooling: "mean",
+      normalize: true,
+    });
+  });
+
+  it("applies the built-in e5 prefixes by input type", async () => {
+    const { provider, extractor } = await load({
+      model: "intfloat/e5-small-v2",
+    });
+    await provider.embed("abc");
+    await provider.embed("abc", { type: "query" });
+    await provider.embedBatch(["a"], { type: "query" });
+    expect(extractor.mock.calls.map((c) => c[0])).toEqual([
+      "passage: abc",
+      "query: abc",
+      ["query: a"],
+    ]);
+  });
+
+  it("uses cls pooling and the instruction prefix for bge, none for documents", async () => {
+    const { provider, extractor } = await load({
+      model: "Xenova/bge-small-en-v1.5",
+    });
+    expect(provider.getConfig().pooling).toBe("cls");
+    await provider.embed("abc", { type: "query" });
+    await provider.embed("abc");
+    expect(extractor.mock.calls[0]).toEqual([
+      "Represent this sentence for searching relevant passages: abc",
+      { pooling: "cls", normalize: true },
+    ]);
+    expect(extractor.mock.calls[1]?.[0]).toBe("abc");
+  });
+
+  it("applies the nomic prefixes", async () => {
+    const { provider, extractor } = await load({
+      model: "nomic-ai/nomic-embed-text-v1.5",
+    });
+    await provider.embed("x", { type: "query" });
+    await provider.embed("x", { type: "document" });
+    expect(extractor.mock.calls.map((c) => c[0])).toEqual([
+      "search_query: x",
+      "search_document: x",
+    ]);
+  });
+
+  it("lets config override prefixes (including empty) and pooling", async () => {
+    const { provider, extractor } = await load({
+      model: "intfloat/e5-small-v2",
+      queryPrefix: "",
+      documentPrefix: "doc: ",
+      pooling: "cls",
+    });
+    await provider.embed("a", { type: "query" });
+    await provider.embed("a");
+    expect(extractor.mock.calls[0]).toEqual([
+      "a",
+      { pooling: "cls", normalize: true },
+    ]);
+    expect(extractor.mock.calls[1]?.[0]).toBe("doc: a");
+  });
+
+  it("reflects vector-changing overrides in the model id", () => {
+    expect(new TransformersProvider().getModelId()).toBe(
+      TRANSFORMERS_DEFAULT_MODEL,
+    );
+    expect(
+      new TransformersProvider({
+        model: "BAAI/bge-small-en-v1.5",
+      }).getModelId(),
+    ).toBe("BAAI/bge-small-en-v1.5");
+    expect(new TransformersProvider({ pooling: "cls" }).getModelId()).toBe(
+      `${TRANSFORMERS_DEFAULT_MODEL}:pooling=cls`,
+    );
+    expect(
+      new TransformersProvider({ documentPrefix: "d: " }).getModelId(),
+    ).toBe(`${TRANSFORMERS_DEFAULT_MODEL}:docprefix="d: "`);
+    // A query prefix does not affect stored vectors.
+    expect(new TransformersProvider({ queryPrefix: "q: " }).getModelId()).toBe(
+      TRANSFORMERS_DEFAULT_MODEL,
+    );
+  });
+
+  it("rejects invalid type, pooling and maxLength", async () => {
+    expect(() => new TransformersProvider({ pooling: "max" as never })).toThrow(
+      RangeError,
+    );
+    expect(() => new TransformersProvider({ maxLength: 0 })).toThrow(
+      RangeError,
+    );
+    expect(() => new TransformersProvider({ maxLength: 1.5 })).toThrow(
+      RangeError,
+    );
+    const { provider } = await load({});
+    await expect(
+      provider.embed("a", { type: "other" as never }),
+    ).rejects.toThrow("Invalid input type");
+  });
+
+  it("makes one padded pipeline call per chunk of 8, in input order", async () => {
+    const { provider, extractor } = await load({});
+    const texts = Array.from({ length: 20 }, (_, i) => "x".repeat(20 - i));
+    const vectors = await provider.embedBatch(texts);
+    expect(extractor).toHaveBeenCalledTimes(3);
+    expect(extractor.mock.calls.every((c) => Array.isArray(c[0]))).toBe(true);
+    // Chunks are length-sorted, but results are restored to input order.
+    expect(vectors.map((v) => v[0])).toEqual(texts.map((t) => t.length));
+    expect(await provider.embedBatch([])).toEqual([]);
+  });
+
+  it("passes max_length to the tokenizer only when configured", async () => {
+    const tokenizers: Array<ReturnType<typeof vi.fn>> = [];
+    mockPipeline.mockImplementation(async () => {
+      const extractor = makeExtractor();
+      tokenizers.push(extractor.tokenizer);
+      return extractor;
+    });
+
+    const plain = await load({});
+    plain.extractor.tokenizer("t", { padding: true, truncation: true });
+    expect(tokenizers[0]).toHaveBeenCalledWith("t", {
+      padding: true,
+      truncation: true,
+    });
+    expect(plain.provider.getConfig().maxLength).toBeUndefined();
+
+    const limited = await load({ maxLength: 64 });
+    limited.extractor.tokenizer("t", { padding: true, truncation: true });
+    expect(tokenizers[1]).toHaveBeenCalledWith("t", {
+      padding: true,
+      truncation: true,
+      max_length: 64,
+    });
+    expect(limited.provider.getConfig().maxLength).toBe(64);
+  });
+
+  it("layer-norms then normalizes nomic vectors, and leaves others to the pipeline", async () => {
+    const nomic = await load({ model: "nomic-ai/nomic-embed-text-v1.5" });
+    expect(nomic.extractor.mock.calls.length).toBe(0);
+    const vec = await nomic.provider.embed("abcd", { type: "query" });
+    expect(nomic.extractor).toHaveBeenCalledWith("search_query: abcd", {
+      pooling: "mean",
+      normalize: false,
+    });
+    expect(Math.hypot(...vec)).toBeCloseTo(1, 6);
+    expect(vec).toEqual(layerNormThenNormalize([18, 0.5, 0.25]));
+    const batch = await nomic.provider.embedBatch(["ab", "abcd"]);
+    expect(Math.hypot(...(batch[1] as number[]))).toBeCloseTo(1, 6);
+
+    const bge = await load({ model: "BAAI/bge-small-en-v1.5" });
+    await bge.provider.embed("x");
+    expect(bge.extractor.mock.calls[0]?.[1]).toEqual({
+      pooling: "cls",
+      normalize: true,
+    });
+  });
+});
+
+describe("explicit overrides beat built-in profiles", () => {
+  async function load(
+    config: ConstructorParameters<typeof TransformersProvider>[0],
+  ) {
+    const provider = new TransformersProvider(config);
+    await provider.init();
+    const extractor = (await mockPipeline.mock.results.at(-1)!
+      .value) as ReturnType<typeof makeExtractor>;
+    return { provider, extractor };
+  }
+
+  it("pooling, both prefixes, dtype and max length all win over the bge profile", async () => {
+    const { provider, extractor } = await load({
+      model: "BAAI/bge-small-en-v1.5",
+      pooling: "mean",
+      queryPrefix: "Q: ",
+      documentPrefix: "D: ",
+      dtype: "q8",
+      maxLength: 32,
+    });
+    await provider.embed("x", { type: "query" });
+    await provider.embed("y");
+    expect(extractor.mock.calls[0]).toEqual([
+      "Q: x",
+      { pooling: "mean", normalize: true },
+    ]);
+    expect(extractor.mock.calls[1]?.[0]).toBe("D: y");
+    expect(mockPipeline).toHaveBeenLastCalledWith(
+      "feature-extraction",
+      "BAAI/bge-small-en-v1.5",
+      expect.objectContaining({ dtype: "q8" }),
+    );
+    expect(provider.getConfig()).toMatchObject({
+      pooling: "mean",
+      queryPrefix: "Q: ",
+      documentPrefix: "D: ",
+      dtype: "q8",
+      maxLength: 32,
+    });
+  });
+
+  it("normalize: false skips L2 normalization and changes the model id", async () => {
+    const { provider, extractor } = await load({ normalize: false });
+    expect(provider.getConfig().normalize).toBe(false);
+    await provider.embed("abcd");
+    expect(extractor.mock.calls[0]?.[1]).toEqual({
+      pooling: "mean",
+      normalize: false,
+    });
+    expect(provider.getModelId()).toBe(
+      `${TRANSFORMERS_DEFAULT_MODEL}:normalize=false`,
+    );
+    expect(new TransformersProvider().getConfig().normalize).toBe(true);
+    expect(new TransformersProvider().getModelId()).toBe(
+      TRANSFORMERS_DEFAULT_MODEL,
+    );
+  });
+
+  it("normalize: false on a layer-norm model keeps the layer norm but not the L2 step", async () => {
+    const { provider } = await load({
+      model: "nomic-ai/nomic-embed-text-v1.5",
+      normalize: false,
+    });
+    const vec = await provider.embed("abcd");
+    expect(vec).toEqual(layerNorm([21, 0.5, 0.25]));
+    expect(Math.hypot(...vec)).not.toBeCloseTo(1, 3);
+  });
+
+  it("resolves a local directory model to an absolute path", () => {
+    const provider = new TransformersProvider({ model: "./some/model-dir" });
+    expect(provider.getConfig().model).toBe(resolvePath("./some/model-dir"));
+  });
+});
+
+describe("layerNormThenNormalize", () => {
+  it("matches a hand-computed layer norm followed by L2 normalization", () => {
+    // [1,3]: mean 2, var 1 -> [-1,1]/sqrt(1+1e-5) -> L2 normalized [-s, s]
+    const out = layerNormThenNormalize([1, 3]);
+    expect(out[0]).toBeCloseTo(-Math.SQRT1_2, 6);
+    expect(out[1]).toBeCloseTo(Math.SQRT1_2, 6);
+  });
+
+  it("returns zeros for a constant row instead of NaN", () => {
+    expect(layerNormThenNormalize([2, 2, 2])).toEqual([0, 0, 0]);
   });
 });

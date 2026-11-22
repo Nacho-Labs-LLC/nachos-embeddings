@@ -57,7 +57,16 @@ export { chunkText, estimateTokens, normalizeText } from "./utils.js";
 export type {
   EmbeddingProvider,
   BaseProviderConfig,
+  EmbedOptions,
 } from "./providers/types.js";
+export {
+  getModelProfile,
+  POOLING_MODES,
+  INPUT_TYPES,
+  type PoolingMode,
+  type InputType,
+  type ModelProfile,
+} from "./providers/model-profiles.js";
 export {
   TransformersProvider,
   TRANSFORMERS_DEFAULT_MODEL,
@@ -69,3 +78,46 @@ export {
   type ResolvedTransformersConfig,
   type CacheDirEnvironment,
 } from "./providers/transformers-provider.js";
+
+// Cross-encoder reranker
+export {
+  Reranker,
+  rerank,
+  disposeRerankers,
+  RERANK_DEFAULT_MODEL,
+  RERANK_FALLBACK_MODEL,
+  RERANK_DEFAULT_DTYPE,
+  RERANK_DEFAULT_MAX_LENGTH,
+  type RerankOptions,
+  type ResolvedRerankOptions,
+} from "./reranker.js";
+
+// Offline mode and reranker profiles
+export { OFFLINE_ENV_VAR, isOfflineEnv } from "./offline.js";
+export { ModelNotCachedError } from "./providers/model-loading.js";
+export {
+  getRerankerProfile,
+  type RerankerProfile,
+} from "./providers/reranker-profiles.js";
+
+// Model catalogue and inspection
+export {
+  MODEL_CATALOG,
+  findCatalogEntry,
+  profileFor,
+  type CatalogEntry,
+  type EffectiveProfile,
+  type ModelKind,
+} from "./providers/model-catalog.js";
+export {
+  listCachedModels,
+  inspectModel,
+  type CachedModel,
+  type ModelInfo,
+} from "./model-cache.js";
+export {
+  ModelLoadError,
+  isLocalModelPath,
+  resolveModelRef,
+  type ModelErrorCode,
+} from "./providers/model-loading.js";

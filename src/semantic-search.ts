@@ -447,9 +447,11 @@ export class SemanticSearch<T = unknown> {
 
   private async embedTexts(texts: string[]): Promise<number[][]> {
     if (texts.length === 1) {
-      return [await this.embedder.embed(texts[0] as string)];
+      return [
+        await this.embedder.embed(texts[0] as string, { type: "document" }),
+      ];
     }
-    return this.embedder.embedBatch(texts);
+    return this.embedder.embedBatch(texts, { type: "document" });
   }
 
   private async addLocked(docs: Document<T>[]): Promise<boolean> {
@@ -557,7 +559,7 @@ export class SemanticSearch<T = unknown> {
     query: string,
     options?: SearchOptions<T>,
   ): Promise<Array<SemanticSearchResult<T>>> {
-    const queryVector = await this.embedder.embed(query);
+    const queryVector = await this.embedder.embed(query, { type: "query" });
     const boost = options?.temporalBoost ?? this.resolved.temporalBoost;
     const limit = options?.limit ?? DEFAULT_LIMIT;
 
