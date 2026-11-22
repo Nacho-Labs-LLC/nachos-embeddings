@@ -18,11 +18,25 @@ import {
   TRANSFORMERS_DEFAULT_DIMENSION,
 } from "../../src/providers/transformers-provider.js";
 
+type ExtractorCall = (
+  input: string | string[],
+  options?: unknown,
+) => Promise<{ data: Float32Array; dims: number[] }>;
+type TokenizerCall = (texts: unknown, options?: unknown) => object;
+
+/** Fake feature-extraction pipeline: one row `[length, 0.5, 0.25]` per text. */
 function makeExtractor() {
-  const extractor = vi.fn(async (text: string) => ({
-    data: new Float32Array([text.length, 0.5, 0.25]),
-  }));
-  return Object.assign(extractor, { dispose: mockDispose });
+  const extractor = vi.fn<ExtractorCall>(async (input) => {
+    const texts = Array.isArray(input) ? input : [input];
+    return {
+      data: new Float32Array(texts.flatMap((t) => [t.length, 0.5, 0.25])),
+      dims: [texts.length, 3],
+    };
+  });
+  return Object.assign(extractor, {
+    dispose: mockDispose,
+    tokenizer: vi.fn<TokenizerCall>(() => ({})),
+  });
 }
 
 beforeEach(() => {
@@ -287,5 +301,161 @@ describe("TransformersProvider", () => {
     const init = provider.init().catch(() => undefined);
     await expect(provider.dispose()).resolves.toBeUndefined();
     await init;
+  });
+});
+
+describe("TransformersProvider prefixes, pooling and batching", () => {
+  async function load(
+    config: ConstructorParameters<typeof TransformersProvider>[0],
+  ) {
+    const provider = new TransformersProvider(config);
+    await provider.init();
+    const extractor = (await mockPipeline.mock.results.at(-1)!
+      .value) as ReturnType<typeof makeExtractor>;
+    return { provider, extractor };
+  }
+
+  it("defaults to document type, mean pooling and no prefix for MiniLM", async () => {
+    const { provider, extractor } = await load({});
+    expect(provider.getConfig()).toMatchObject({
+      pooling: "mean",
+      queryPrefix: "",
+      documentPrefix: "",
+    });
+    await provider.embed("abc");
+    expect(extractor).toHaveBeenCalledWith("abc", {
+      pooling: "mean",
+      normalize: true,
+    });
+  });
+
+  it("applies the built-in e5 prefixes by input type", async () => {
+    const { provider, extractor } = await load({
+      model: "intfloat/e5-small-v2",
+    });
+    await provider.embed("abc");
+    await provider.embed("abc", { type: "query" });
+    await provider.embedBatch(["a"], { type: "query" });
+    expect(extractor.mock.calls.map((c) => c[0])).toEqual([
+      "passage: abc",
+      "query: abc",
+      ["query: a"],
+    ]);
+  });
+
+  it("uses cls pooling and the instruction prefix for bge, none for documents", async () => {
+    const { provider, extractor } = await load({
+      model: "Xenova/bge-small-en-v1.5",
+    });
+    expect(provider.getConfig().pooling).toBe("cls");
+    await provider.embed("abc", { type: "query" });
+    await provider.embed("abc");
+    expect(extractor.mock.calls[0]).toEqual([
+      "Represent this sentence for searching relevant passages: abc",
+      { pooling: "cls", normalize: true },
+    ]);
+    expect(extractor.mock.calls[1]?.[0]).toBe("abc");
+  });
+
+  it("applies the nomic prefixes", async () => {
+    const { provider, extractor } = await load({
+      model: "nomic-ai/nomic-embed-text-v1.5",
+    });
+    await provider.embed("x", { type: "query" });
+    await provider.embed("x", { type: "document" });
+    expect(extractor.mock.calls.map((c) => c[0])).toEqual([
+      "search_query: x",
+      "search_document: x",
+    ]);
+  });
+
+  it("lets config override prefixes (including empty) and pooling", async () => {
+    const { provider, extractor } = await load({
+      model: "intfloat/e5-small-v2",
+      queryPrefix: "",
+      documentPrefix: "doc: ",
+      pooling: "cls",
+    });
+    await provider.embed("a", { type: "query" });
+    await provider.embed("a");
+    expect(extractor.mock.calls[0]).toEqual([
+      "a",
+      { pooling: "cls", normalize: true },
+    ]);
+    expect(extractor.mock.calls[1]?.[0]).toBe("doc: a");
+  });
+
+  it("reflects vector-changing overrides in the model id", () => {
+    expect(new TransformersProvider().getModelId()).toBe(
+      TRANSFORMERS_DEFAULT_MODEL,
+    );
+    expect(
+      new TransformersProvider({
+        model: "BAAI/bge-small-en-v1.5",
+      }).getModelId(),
+    ).toBe("BAAI/bge-small-en-v1.5");
+    expect(new TransformersProvider({ pooling: "cls" }).getModelId()).toBe(
+      `${TRANSFORMERS_DEFAULT_MODEL}:pooling=cls`,
+    );
+    expect(
+      new TransformersProvider({ documentPrefix: "d: " }).getModelId(),
+    ).toBe(`${TRANSFORMERS_DEFAULT_MODEL}:docprefix="d: "`);
+    // A query prefix does not affect stored vectors.
+    expect(new TransformersProvider({ queryPrefix: "q: " }).getModelId()).toBe(
+      TRANSFORMERS_DEFAULT_MODEL,
+    );
+  });
+
+  it("rejects invalid type, pooling and maxLength", async () => {
+    expect(() => new TransformersProvider({ pooling: "max" as never })).toThrow(
+      RangeError,
+    );
+    expect(() => new TransformersProvider({ maxLength: 0 })).toThrow(
+      RangeError,
+    );
+    expect(() => new TransformersProvider({ maxLength: 1.5 })).toThrow(
+      RangeError,
+    );
+    const { provider } = await load({});
+    await expect(
+      provider.embed("a", { type: "other" as never }),
+    ).rejects.toThrow("Invalid input type");
+  });
+
+  it("makes one padded pipeline call per chunk of 8, in input order", async () => {
+    const { provider, extractor } = await load({});
+    const texts = Array.from({ length: 20 }, (_, i) => "x".repeat(20 - i));
+    const vectors = await provider.embedBatch(texts);
+    expect(extractor).toHaveBeenCalledTimes(3);
+    expect(extractor.mock.calls.every((c) => Array.isArray(c[0]))).toBe(true);
+    // Chunks are length-sorted, but results are restored to input order.
+    expect(vectors.map((v) => v[0])).toEqual(texts.map((t) => t.length));
+    expect(await provider.embedBatch([])).toEqual([]);
+  });
+
+  it("passes max_length to the tokenizer only when configured", async () => {
+    const tokenizers: Array<ReturnType<typeof vi.fn>> = [];
+    mockPipeline.mockImplementation(async () => {
+      const extractor = makeExtractor();
+      tokenizers.push(extractor.tokenizer);
+      return extractor;
+    });
+
+    const plain = await load({});
+    plain.extractor.tokenizer("t", { padding: true, truncation: true });
+    expect(tokenizers[0]).toHaveBeenCalledWith("t", {
+      padding: true,
+      truncation: true,
+    });
+    expect(plain.provider.getConfig().maxLength).toBeUndefined();
+
+    const limited = await load({ maxLength: 64 });
+    limited.extractor.tokenizer("t", { padding: true, truncation: true });
+    expect(tokenizers[1]).toHaveBeenCalledWith("t", {
+      padding: true,
+      truncation: true,
+      max_length: 64,
+    });
+    expect(limited.provider.getConfig().maxLength).toBe(64);
   });
 });

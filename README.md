@@ -41,7 +41,7 @@ const results = await search.search("What does the user eat in the morning?", {
 
 | Option            | Default                   | Description                                                                                                                                                                                                                    |
 | ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`        | local Transformers        | Any `EmbeddingProvider`. Overrides `model`, `cacheDir`, `dtype`, `progressLogging`.                                                                                                                                            |
+| `provider`        | local Transformers        | Any `EmbeddingProvider`. Overrides `model`, `cacheDir`, `dtype`, `pooling`, `queryPrefix`, `documentPrefix`, `maxLength`, `progressLogging`.                                                                                   |
 | `model`           | `Xenova/all-MiniLM-L6-v2` | Transformers.js model id (default provider only).                                                                                                                                                                              |
 | `cacheDir`        | per-user dir              | Model cache directory (see [Transformers](#transformers-default)).                                                                                                                                                             |
 | `progressLogging` | `false`                   | Log model download progress.                                                                                                                                                                                                   |
@@ -114,7 +114,7 @@ await embedder.init();
 const vec = await embedder.embed("hello"); // number[384]
 ```
 
-Options: `model`, `cacheDir`, `dtype`, `progressLogging`. Methods: `init()`, `embed()`, `embedBatch()`, `getDimension()`, `getModelId()`, `getConfig()`, `isInitialized()`, `dispose()`.
+Options: `model`, `cacheDir`, `dtype`, `pooling`, `queryPrefix`, `documentPrefix`, `maxLength`, `progressLogging`. Methods: `init()`, `embed()`, `embedBatch()`, `getDimension()`, `getModelId()`, `getConfig()`, `isInitialized()`, `dispose()`.
 
 **Cache directory**, first match wins: `cacheDir` option (CLI `--cache-dir`), `$NACHOS_EMBEDDINGS_CACHE`, `$XDG_CACHE_HOME/nachos-embeddings`, `~/.cache/nachos-embeddings`. On Windows: `%LOCALAPPDATA%\nachos-embeddings`. `resolveDefaultCacheDir()` returns the result.
 
@@ -199,6 +199,36 @@ Methods: `add`, `get`, `has`, `remove`, `clear`, `size`, `keys`, `export`, `impo
 
 The in-memory store suits tens of thousands of vectors at most; beyond that use a dedicated vector database.
 
+**Query vs document, prefixes and pooling.** Retrieval models are trained with asymmetric inputs: a search query and the passages it should find get different prefixes. `embed()` and `embedBatch()` take `{ type: "query" | "document" }` (default `"document"`, which is what 0.5.x did). `SemanticSearch` embeds documents as `"document"` and `search()` queries as `"query"` for you. Prefixes and pooling default per model from a small built-in table (matched on the model id, case-insensitive):
+
+| Model id contains          | Pooling | Query prefix                                                | Document prefix     |
+| -------------------------- | ------- | ----------------------------------------------------------- | ------------------- |
+| `e5-` (e5-small-v2, ...)   | `mean`  | `query: `                                                   | `passage: `         |
+| `bge-*-en-v1.5`            | `cls`   | `Represent this sentence for searching relevant passages: ` | none                |
+| `nomic-embed-text-v1.5`    | `mean`  | `search_query: `                                            | `search_document: ` |
+| MiniLM and any other model | `mean`  | none                                                        | none                |
+
+Override with the `pooling` (`mean` or `cls`), `queryPrefix` and `documentPrefix` options (CLI: `--pooling`, `--query-prefix`, `--document-prefix`; pass `""` to disable a prefix). Vectors are always L2-normalized. `getConfig()` reports the active values. An overridden `pooling` or `documentPrefix` that differs from the model's default is appended to `getModelId()` (e.g. `...:pooling=cls`), because it changes stored vectors. Switching a prefixed model from 0.5.x to this release changes its document vectors (0.5.x embedded without prefixes), so re-index.
+
+**Truncation.** Inputs are truncated to the tokenizer's own limit (`model_max_length`, typically 512 tokens, fewer for some models); longer text is cut silently, never an error. `maxLength` (CLI `--max-length <tokens>`) lowers that limit, counting special tokens; it cannot raise it. For long documents use `autoChunk` instead of relying on truncation.
+
+**Batching.** `embedBatch` runs one padded pipeline call per chunk of 8 texts, with texts ordered by length first so chunks pad to similar lengths. Results come back in input order and match single-text vectors (cosine > 0.999, checked against a real model). On this release's benchmark (64 texts, CPU) it was 1.0x to 1.8x faster than the previous concurrent single-text calls; chunks of 32 were up to 1.5x slower on mixed-length input because of padding, hence 8.
+
+#### Recommended retrieval models
+
+The default `Xenova/all-MiniLM-L6-v2` is a fine general starter. For retrieval, models trained with query/document prefixes usually rank better. Sizes are the fp32 `model.onnx` download (`dtype: "q8"` is smaller); all four rows were run end to end in this release (info, embed, serve, ranking a query against four documents).
+
+| Model                            | Dim | Download (fp32) | Notes                                                                                                   |
+| -------------------------------- | --- | --------------- | ------------------------------------------------------------------------------------------------------- |
+| `Xenova/all-MiniLM-L6-v2`        | 384 | 90 MB           | Default. No prefixes.                                                                                   |
+| `BAAI/bge-small-en-v1.5`         | 384 | 133 MB          | `cls` pooling, query instruction. Smoke-tested.                                                         |
+| `Xenova/e5-small-v2`             | 384 | 133 MB          | `query: ` / `passage: `. Smoke-tested. Use the `Xenova/` repo: `intfloat/e5-small-v2` has no ONNX file. |
+| `nomic-ai/nomic-embed-text-v1.5` | 768 | 547 MB          | `search_query: ` / `search_document: `. Smoke-tested.                                                   |
+
+```bash
+npx nachos-embeddings serve --model BAAI/bge-small-en-v1.5
+```
+
 ## CLI
 
 For callers that are not JavaScript. All diagnostics go to stderr; stdout carries only data.
@@ -209,31 +239,46 @@ npx nachos-embeddings serve                              # persistent JSON-lines
 npx nachos-embeddings info [--json]                      # provider, model, dimension, cache dir
 ```
 
-| Flag                | Applies to   | Description                                                                          |
-| ------------------- | ------------ | ------------------------------------------------------------------------------------ |
-| `--stdin`, `--json` | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output. |
-| `--provider <name>` | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.               |
-| `--model <id>`      | all          | Transformers model name, or Bedrock model id.                                        |
-| `--region <region>` | bedrock      | AWS region (default `us-east-1`).                                                    |
-| `--cache-dir <dir>` | transformers | Model cache directory (default: per-user, see above).                                |
-| `--dtype <type>`    | transformers | Precision, e.g. `q8`. Appended to the reported model id.                             |
+| Flag                                          | Applies to   | Description                                                                          |
+| --------------------------------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| `--stdin`, `--json`                           | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output. |
+| `--provider <name>`                           | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.               |
+| `--model <id>`                                | all          | Transformers model name, or Bedrock model id.                                        |
+| `--region <region>`                           | bedrock      | AWS region (default `us-east-1`).                                                    |
+| `--cache-dir <dir>`                           | transformers | Model cache directory (default: per-user, see above).                                |
+| `--dtype <type>`                              | transformers | Precision, e.g. `q8`. Appended to the reported model id.                             |
+| `--type <t>`                                  | `embed`      | `query` or `document` (default). Selects the model's prefix. In `serve`, see below.  |
+| `--pooling <mode>`                            | transformers | `mean` or `cls`. Default per model.                                                  |
+| `--query-prefix <s>`, `--document-prefix <s>` | transformers | Override the model's prefixes (`""` disables).                                       |
+| `--max-length <n>`                            | transformers | Truncate to `n` tokens (can only lower the tokenizer limit).                         |
 
 **`serve`** loads the provider once, then handles one request per stdin line, sequentially and in order. First stdout line:
 
 ```json
-{ "ready": true, "model": "Xenova/all-MiniLM-L6-v2", "dimension": 384 }
+{
+  "ready": true,
+  "model": "Xenova/all-MiniLM-L6-v2",
+  "dimension": 384,
+  "pooling": "mean",
+  "queryPrefix": "",
+  "documentPrefix": ""
+}
 ```
+
+`pooling`, `queryPrefix`, `documentPrefix` (and `maxLength`, when set) are optional extra fields, sent for the transformers provider only; existing readers of `model` and `dimension` are unaffected. A request may carry an optional `"type": "query"` or `"document"`; omitting it behaves exactly as before.
 
 ```text
 > {"id": 1, "texts": ["hello", "world"]}
 < {"id": 1, "vectors": [[0.01, ...], [0.02, ...]]}
+> {"id": 2, "texts": ["what do I eat?"], "type": "query"}
+< {"id": 2, "vectors": [[0.03, ...]]}
 > not json
 < {"id": null, "error": "invalid request: expected {id, texts: [...]}"}
 ```
 
-A malformed line, or a request without a `texts` array, gets an error reply (with `id: null` when the id cannot be read) and the server keeps running. An embedding failure replies `{"id": n, "error": "<message>"}`. Blank lines are ignored. On stdin EOF the provider is disposed and the process exits 0. If the reader closes stdout early (EPIPE, e.g. `serve | head -1`), the process disposes and exits 0.
+A malformed line, a request without a `texts` array, or an unknown `type` gets an error reply (with `id: null` when the id cannot be read) and the server keeps running. An embedding failure replies `{"id": n, "error": "<message>"}`. Blank lines are ignored. On stdin EOF the provider is disposed and the process exits 0. If the reader closes stdout early (EPIPE, e.g. `serve | head -1`), the process disposes and exits 0.
 
-**`info`** prints `provider`, `model`, `dimension` and `cacheDir` as `key: value` lines, or one JSON object with `--json` (`cacheDir` is `null` for Bedrock).
+**`info`** prints `provider`, `model`, `dimension`, `cacheDir` and (transformers) `pooling`, `queryPrefix`, `documentPrefix` as `key: value` lines, or one JSON object with `--json` (`cacheDir` is `null` for Bedrock).
 
 **Exit codes:** `0` success, `1` usage error (unknown subcommand/provider, missing flag value, missing `--stdin --json`), `2` provider init or embedding failure.
 

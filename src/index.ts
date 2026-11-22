@@ -57,7 +57,16 @@ export { chunkText, estimateTokens, normalizeText } from "./utils.js";
 export type {
   EmbeddingProvider,
   BaseProviderConfig,
+  EmbedOptions,
 } from "./providers/types.js";
+export {
+  getModelProfile,
+  POOLING_MODES,
+  INPUT_TYPES,
+  type PoolingMode,
+  type InputType,
+  type ModelProfile,
+} from "./providers/model-profiles.js";
 export {
   TransformersProvider,
   TRANSFORMERS_DEFAULT_MODEL,

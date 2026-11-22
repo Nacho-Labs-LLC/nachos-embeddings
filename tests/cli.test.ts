@@ -31,9 +31,21 @@ function createLoader() {
         return dtype ? model + ":" + dtype : model;
       }
       async getDimension() { return 1; }
-      getConfig() { return { cacheDir: this.options.cacheDir ?? "/stub/default-cache" }; }
+      getConfig() {
+        const { pooling, queryPrefix, documentPrefix, maxLength } = this.options;
+        return {
+          cacheDir: this.options.cacheDir ?? "/stub/default-cache",
+          ...(pooling !== undefined && { pooling }),
+          ...(queryPrefix !== undefined && { queryPrefix }),
+          ...(documentPrefix !== undefined && { documentPrefix }),
+          ...(maxLength !== undefined && { maxLength }),
+        };
+      }
       async dispose() { log({ disposed: "transformers" }); }
-      async embedBatch(lines) { return lines.map((_, index) => [index + 0.25]); }
+      async embedBatch(lines, ...rest) {
+        log({ embedBatch: { argCount: 1 + rest.length, options: rest[0] ?? null } });
+        return lines.map((_, index) => [index + 0.25]);
+      }
     }
   `;
   const bedrock = `${common}
@@ -97,7 +109,8 @@ function runCli(args: string[], input = "") {
   const events = readEvents(log);
   const providers = events.filter((event) => event.provider);
   const disposed = events.flatMap((event) => event.disposed ?? []);
-  return { ...result, providers, disposed };
+  const batches = events.flatMap((event) => event.embedBatch ?? []);
+  return { ...result, providers, disposed, batches };
 }
 
 afterEach(() => {
@@ -182,6 +195,104 @@ describe("nachos-embeddings CLI", () => {
     expect(out[2].error).toContain("invalid request");
     expect(out[3]).toEqual({ id: 3, vectors: [[0.25]] });
     expect(result.providers).toHaveLength(1);
+  });
+
+  it("embed --type forwards the input type; omitted passes no options", () => {
+    const typed = runCli(
+      ["embed", "--stdin", "--json", "--type", "query"],
+      "a\n",
+    );
+    expect(typed.batches).toEqual([
+      { argCount: 2, options: { type: "query" } },
+    ]);
+    const plain = runCli(["embed", "--stdin", "--json"], "a\n");
+    expect(plain.batches).toEqual([{ argCount: 1, options: null }]);
+  });
+
+  it("rejects invalid --type, --pooling and --max-length", () => {
+    for (const bad of [
+      ["--type", "doc"],
+      ["--pooling", "max"],
+      ["--max-length", "0"],
+      ["--max-length", "abc"],
+      ["--max-length", "1.5"],
+    ]) {
+      const result = runCli(["embed", "--stdin", "--json", ...bad], "a\n");
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.providers).toEqual([]);
+    }
+  });
+
+  it("forwards --pooling, prefixes (including empty) and --max-length", () => {
+    const result = runCli(
+      [
+        "serve",
+        "--pooling",
+        "cls",
+        "--query-prefix",
+        "",
+        "--document-prefix",
+        "doc: ",
+        "--max-length",
+        "128",
+      ],
+      "",
+    );
+    expect(result.providers[0].options).toMatchObject({
+      pooling: "cls",
+      queryPrefix: "",
+      documentPrefix: "doc: ",
+      maxLength: 128,
+    });
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      ready: true,
+      model: "stub-default",
+      dimension: 1,
+      pooling: "cls",
+      queryPrefix: "",
+      documentPrefix: "doc: ",
+      maxLength: 128,
+    });
+  });
+
+  it("serve honours a per-request type and keeps old requests unchanged", () => {
+    const input = [
+      JSON.stringify({ id: 1, texts: ["a"] }),
+      JSON.stringify({ id: 2, texts: ["a"], type: "query" }),
+      JSON.stringify({ id: 3, texts: ["a"], type: "document" }),
+      JSON.stringify({ id: 4, texts: ["a"], type: "bogus" }),
+    ].join("\n");
+    const result = runCli(["serve"], input + "\n");
+    const out = result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(out[1]).toEqual({ id: 1, vectors: [[0.25]] });
+    expect(out[2]).toEqual({ id: 2, vectors: [[0.25]] });
+    expect(out[3]).toEqual({ id: 3, vectors: [[0.25]] });
+    expect(out[4]).toEqual({
+      id: 4,
+      error: "invalid request: type must be 'query' or 'document'",
+    });
+    expect(result.batches).toEqual([
+      { argCount: 1, options: null },
+      { argCount: 2, options: { type: "query" } },
+      { argCount: 2, options: { type: "document" } },
+    ]);
+  });
+
+  it("info --json reports pooling and prefixes when the provider has them", () => {
+    const result = runCli(
+      ["info", "--json", "--pooling", "mean", "--document-prefix", ""],
+      "",
+    );
+    expect(JSON.parse(result.stdout.trim())).toMatchObject({
+      pooling: "mean",
+      documentPrefix: "",
+    });
+    const text = runCli(["info", "--query-prefix", "q: "], "");
+    expect(text.stdout).toContain('queryPrefix: "q: "');
   });
 
   it("serve reports the provider's model id, not a hardcoded default", () => {

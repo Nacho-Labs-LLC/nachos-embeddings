@@ -35,7 +35,9 @@ describe("SemanticSearch with custom provider", () => {
     await search.init();
 
     await search.addDocument({ id: "doc1", text: "hello world" });
-    expect(mockProvider.embed).toHaveBeenCalledWith("hello world");
+    expect(mockProvider.embed).toHaveBeenCalledWith("hello world", {
+      type: "document",
+    });
   });
 
   it("uses the custom provider for search", async () => {
@@ -50,7 +52,7 @@ describe("SemanticSearch with custom provider", () => {
     await search.addDocument({ id: "doc1", text: "hello" });
     const results = await search.search("query");
 
-    expect(mockProvider.embed).toHaveBeenCalledWith("query");
+    expect(mockProvider.embed).toHaveBeenCalledWith("query", { type: "query" });
     expect(results).toHaveLength(1);
     expect(results[0]!.id).toBe("doc1");
   });
@@ -66,7 +68,9 @@ describe("SemanticSearch with custom provider", () => {
       { id: "b", text: "beta" },
     ]);
 
-    expect(mockProvider.embedBatch).toHaveBeenCalledWith(["alpha", "beta"]);
+    expect(mockProvider.embedBatch).toHaveBeenCalledWith(["alpha", "beta"], {
+      type: "document",
+    });
     expect(search.size()).toBe(2);
   });
 

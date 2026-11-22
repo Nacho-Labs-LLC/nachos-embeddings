@@ -4,7 +4,7 @@
  * This is a backward-compatible wrapper around TransformersProvider.
  */
 
-import type { EmbeddingProvider } from "./providers/types.js";
+import type { EmbeddingProvider, EmbedOptions } from "./providers/types.js";
 import {
   TransformersProvider,
   type TransformersProviderConfig,
@@ -43,13 +43,16 @@ export class Embedder implements EmbeddingProvider {
   }
 
   /** @throws Error if not initialized */
-  async embed(text: string): Promise<number[]> {
-    return this.provider.embed(text);
+  async embed(text: string, options?: EmbedOptions): Promise<number[]> {
+    return this.provider.embed(text, options);
   }
 
   /** More efficient than calling embed() multiple times */
-  async embedBatch(texts: string[]): Promise<number[][]> {
-    return this.provider.embedBatch(texts);
+  async embedBatch(
+    texts: string[],
+    options?: EmbedOptions,
+  ): Promise<number[][]> {
+    return this.provider.embedBatch(texts, options);
   }
 
   /** Returns null if not initialized */

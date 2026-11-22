@@ -19,8 +19,16 @@
 - `SemanticSearch` options: `deduplicate` (`"off"`, `"exact"`, `"normalized"`, `{ similarity }`), `autoSave`, `storePath`, `loadOnInit`, `onCorruptStore`, `autoChunk`, `maxChunkTokens`, `chunkOverlap`, `temporalBoost` (also per search), `logger`, `verbose`, `onError`. New methods `getDocument`, `listDocuments`, `load`, `persist`, `getConfig`.
 - `StoreCorruptError` (with `path`), and exported types `SemanticSearchOptions`, `SemanticSearchLogger`, `DeduplicateOption`, `ResolvedSemanticSearchConfig`.
 
+- Query/document input types: `embed(text, { type })` and `embedBatch(texts, { type })` (`"query"` or `"document"`, default `"document"`), CLI `embed --type`, and an optional per-request `"type"` in `serve` (requests without it behave as before). `SemanticSearch` embeds documents as `"document"` and `search()` queries as `"query"`.
+- Built-in per-model prefix and pooling table (e5: `query: ` / `passage: `; bge-*-en-v1.5: cls pooling and the retrieval instruction on queries; nomic-embed-text-v1.5: `search_query: ` / `search_document: `; MiniLM and unknown models: none, mean), overridable with `queryPrefix`, `documentPrefix`, `pooling` options and `--query-prefix`, `--document-prefix`, `--pooling`. Exports `getModelProfile`, `POOLING_MODES`, `INPUT_TYPES` and the `EmbedOptions`, `PoolingMode`, `InputType`, `ModelProfile` types. Overrides that change document vectors are appended to `getModelId()`.
+- `maxLength` option and `--max-length` to truncate inputs to fewer tokens than the tokenizer limit (which still applies; the default is unchanged).
+- `info` and the `serve` ready line report `pooling`, `queryPrefix`, `documentPrefix` (and `maxLength` when set) for the transformers provider; new optional fields only.
+- README: recommended retrieval models (bge-small-en-v1.5, e5-small-v2, nomic-embed-text-v1.5) with download sizes.
+
 ### Changed
 
+- Transformers `embedBatch` now makes one padded pipeline call per chunk of 8 texts (length-sorted, results in input order) instead of concurrent single-text calls: 1.0x to 1.8x faster in a CPU benchmark, vectors match single calls (cosine > 0.999).
+- Models in the prefix table now embed documents with their trained prefix (e5: `passage: `, nomic: `search_document: `), so vectors for those models differ from 0.5.x. Re-index if you use them. MiniLM (the default) and bge documents are unchanged.
 - `SemanticSearch` and `EnhancedSemanticSearch` are unified: `SemanticSearch` carries every feature, and `EnhancedSemanticSearch` is a thin deprecated alias that maps the old options (`deduplicateExact`, `deduplicateSimilarity`, `forceSave()`, default `.semantic-store.json` with `autoSave`).
 - Base `SemanticSearch` now loads `storePath` on `init()` (it previously only wrote).
 - Persistence is a single serialized, coalescing write queue with atomic writes (temp file, fsync, rename), async fs only. `autoSave` failures go to `onError`/`logger` and are rethrown once by the next `persist()`.

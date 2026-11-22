@@ -36,6 +36,15 @@
  *                        non-default dtype is appended to the reported model
  *                        id (e.g. "Xenova/all-MiniLM-L6-v2:q8").
  *
+ *   --type <t>           embed only: 'query' | 'document' (default). Selects the
+ *                        model's query/document prefix. In serve, set per
+ *                        request with an optional "type" field.
+ *   --query-prefix <s>   override the model's query prefix ("" disables it)
+ *   --document-prefix <s> override the model's document prefix
+ *   --pooling <mode>     mean | cls (default: per model; bge uses cls)
+ *   --max-length <n>     truncate inputs to n tokens (can only lower the
+ *                        tokenizer's own limit; default: tokenizer limit)
+ *
  * Exit codes: 0 ok, 1 usage error, 2 embedding failure.
  * All diagnostics go to stderr so stdout stays pure JSONL.
  */
@@ -51,7 +60,14 @@ const VALUE_OPTIONS = {
   "--region": "region",
   "--cache-dir": "cacheDir",
   "--dtype": "dtype",
+  "--type": "type",
+  "--query-prefix": "queryPrefix",
+  "--document-prefix": "documentPrefix",
+  "--pooling": "pooling",
+  "--max-length": "maxLength",
 };
+
+const INPUT_TYPES = ["query", "document"];
 
 class UsageError extends Error {}
 
@@ -63,6 +79,11 @@ function parseArgs(argv) {
     region: undefined,
     cacheDir: undefined,
     dtype: undefined,
+    type: undefined,
+    queryPrefix: undefined,
+    documentPrefix: undefined,
+    pooling: undefined,
+    maxLength: undefined,
     stdin: false,
     json: false,
   };
@@ -73,6 +94,22 @@ function parseArgs(argv) {
     throw new UsageError(
       `unknown provider '${args.provider}' (expected ${PROVIDERS.join("|")})`,
     );
+  }
+  if (args.type !== undefined && !INPUT_TYPES.includes(args.type)) {
+    throw new UsageError(
+      `unknown type '${args.type}' (expected ${INPUT_TYPES.join("|")})`,
+    );
+  }
+  if (args.pooling !== undefined && !["mean", "cls"].includes(args.pooling)) {
+    throw new UsageError(
+      `unknown pooling '${args.pooling}' (expected mean|cls)`,
+    );
+  }
+  if (args.maxLength !== undefined) {
+    if (!/^[1-9]\d*$/.test(args.maxLength)) {
+      throw new UsageError("--max-length must be a positive integer");
+    }
+    args.maxLength = Number(args.maxLength);
   }
   return args;
 }
@@ -133,11 +170,17 @@ async function makeBedrockProvider({ model, region }) {
   return provider;
 }
 
-async function makeTransformersProvider({ model, cacheDir, dtype }) {
+async function makeTransformersProvider(args) {
+  const { model, cacheDir, dtype, pooling, queryPrefix, documentPrefix } = args;
   const provider = new Embedder({
     ...(model && { model }),
     ...(cacheDir && { cacheDir }),
     ...(dtype && { dtype }),
+    ...(pooling && { pooling }),
+    // An empty prefix is meaningful (it disables the model's built-in one).
+    ...(queryPrefix !== undefined && { queryPrefix }),
+    ...(documentPrefix !== undefined && { documentPrefix }),
+    ...(args.maxLength !== undefined && { maxLength: args.maxLength }),
   });
   await provider.init();
   return provider;
@@ -148,7 +191,9 @@ const USAGE =
   "       nachos-embeddings serve [options]\n" +
   "       nachos-embeddings info [--json] [options]\n" +
   "options: [--provider transformers|bedrock] [--model <id>] [--region <r>]\n" +
-  "         [--cache-dir <dir>] [--dtype <fp32|fp16|q8|q4|...>]\n";
+  "         [--cache-dir <dir>] [--dtype <fp32|fp16|q8|q4|...>]\n" +
+  "         [--type query|document] [--pooling mean|cls] [--max-length <tokens>]\n" +
+  "         [--query-prefix <text>] [--document-prefix <text>]\n";
 
 function parseLines(raw) {
   // One text per line; preserve order. Drop only a trailing empty line.
@@ -162,8 +207,16 @@ function fail(stage, err) {
   process.exit(2);
 }
 
-async function embedLines(provider, lines) {
-  const vectors = await provider.embedBatch(lines);
+// Only pass options when a type was requested, so the call is identical to
+// the pre-0.6 one otherwise (and providers without options never see them).
+function embedBatchWithType(provider, texts, type) {
+  return type === undefined
+    ? provider.embedBatch(texts)
+    : provider.embedBatch(texts, { type });
+}
+
+async function embedLines(provider, lines, type) {
+  const vectors = await embedBatchWithType(provider, lines, type);
   process.stdout.write(vectors.map((v) => JSON.stringify(v)).join("\n") + "\n");
 }
 
@@ -186,11 +239,28 @@ async function answerRequest(provider, line) {
   if (!Array.isArray(request.texts)) {
     return { id, error: "invalid request: expected {id, texts: [...]}" };
   }
+  if (request.type !== undefined && !INPUT_TYPES.includes(request.type)) {
+    return { id, error: "invalid request: type must be 'query' or 'document'" };
+  }
   try {
-    return { id, vectors: await provider.embedBatch(request.texts) };
+    return {
+      id,
+      vectors: await embedBatchWithType(provider, request.texts, request.type),
+    };
   } catch (e) {
     return { id, error: String(e?.message ?? e) };
   }
+}
+
+// Active embedding settings, when the provider reports them (transformers).
+// Keys are omitted otherwise, so other providers' output is unchanged.
+function embeddingSettings(provider) {
+  const config = provider.getConfig?.() ?? {};
+  const settings = {};
+  for (const key of ["pooling", "queryPrefix", "documentPrefix", "maxLength"]) {
+    if (config[key] !== undefined) settings[key] = config[key];
+  }
+  return settings;
 }
 
 function modelId(provider) {
@@ -225,6 +295,7 @@ async function runServe(args) {
     ready: true,
     model: modelId(provider),
     dimension: await provider.getDimension(),
+    ...embeddingSettings(provider),
   });
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   // Sequential: one in-flight request at a time keeps replies in order.
@@ -243,12 +314,17 @@ async function runInfo(args) {
     model: modelId(provider),
     dimension: await provider.getDimension(),
     cacheDir: provider.getConfig?.().cacheDir ?? null,
+    ...embeddingSettings(provider),
   };
   if (args.json) {
     writeJson(info);
   } else {
     for (const [key, value] of Object.entries(info)) {
-      process.stdout.write(`${key}: ${value ?? "-"}\n`);
+      const shown =
+        typeof value === "string" && key.endsWith("Prefix")
+          ? JSON.stringify(value)
+          : (value ?? "-");
+      process.stdout.write(`${key}: ${shown}\n`);
     }
   }
   await disposeProvider(provider);
@@ -287,7 +363,9 @@ async function runEmbedding(args) {
   const provider = await makeProvider(args).catch((e) =>
     fail("init failed", e),
   );
-  await embedLines(provider, lines).catch((e) => fail("embed failed", e));
+  await embedLines(provider, lines, args.type).catch((e) =>
+    fail("embed failed", e),
+  );
   await disposeProvider(provider);
 }
 
