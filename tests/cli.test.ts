@@ -14,6 +14,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "..");
 const temporaryPaths: string[] = [];
+const packageVersion: string = JSON.parse(
+  readFileSync(join(root, "package.json"), "utf8"),
+).version;
 
 function createLoader() {
   const directory = mkdtempSync(join(tmpdir(), "nachos-cli-test-"));
@@ -140,6 +143,14 @@ afterEach(() => {
 });
 
 describe("nachos-embeddings CLI", () => {
+  it("--version prints the package version and exits 0", () => {
+    const result = runCli(["--version"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`${packageVersion}\n`);
+    expect(result.providers).toHaveLength(0);
+  });
+
   it("returns usage errors without writing JSONL", () => {
     const result = runCli(["embed", "--stdin"]);
 
@@ -208,6 +219,7 @@ describe("nachos-embeddings CLI", () => {
       .map((line) => JSON.parse(line));
     expect(out[0]).toEqual({
       ready: true,
+      version: packageVersion,
       model: "custom-model",
       dimension: 1,
     });
@@ -268,6 +280,7 @@ describe("nachos-embeddings CLI", () => {
     });
     expect(JSON.parse(result.stdout.trim())).toEqual({
       ready: true,
+      version: packageVersion,
       model: "stub-default",
       dimension: 1,
       pooling: "cls",
@@ -320,12 +333,14 @@ describe("nachos-embeddings CLI", () => {
     const result = runCli(["serve"], "");
     expect(JSON.parse(result.stdout.trim())).toEqual({
       ready: true,
+      version: packageVersion,
       model: "stub-default",
       dimension: 1,
     });
     const bedrock = runCli(["serve", "--provider", "bedrock"], "");
     expect(JSON.parse(bedrock.stdout.trim())).toEqual({
       ready: true,
+      version: packageVersion,
       model: "stub-bedrock-default",
       dimension: 2,
     });
@@ -525,6 +540,7 @@ describe("nachos-embeddings CLI", () => {
       const out = serveLines(result.stdout);
       expect(out[0]).toEqual({
         ready: true,
+        version: packageVersion,
         model: "custom-model",
         dimension: 1,
       });
@@ -555,6 +571,7 @@ describe("nachos-embeddings CLI", () => {
       const out = serveLines(result.stdout);
       expect(out[0]).toEqual({
         ready: true,
+        version: packageVersion,
         model: "stub-default",
         dimension: 1,
         rerank: { model: "r:q8" },

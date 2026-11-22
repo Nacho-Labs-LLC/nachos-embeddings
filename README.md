@@ -340,6 +340,7 @@ npx nachos-embeddings info <model> [--dtype q8]          # describe a model id o
 
 | Flag                                          | Applies to   | Description                                                                                                                   |
 | --------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `--version`                                   | alone        | Print the package version and exit 0 (clients use it to detect the feature set; releases before 0.6.0 have no such flag).     |
 | `--stdin`, `--json`                           | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output.                                          |
 | `--provider <name>`                           | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.                                                        |
 | `--model <id>`                                | all          | Transformers model name, or Bedrock model id.                                                                                 |
@@ -362,6 +363,7 @@ npx nachos-embeddings info <model> [--dtype q8]          # describe a model id o
 ```json
 {
   "ready": true,
+  "version": "0.6.0",
   "model": "Xenova/all-MiniLM-L6-v2",
   "dimension": 384,
   "pooling": "mean",

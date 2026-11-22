@@ -20,6 +20,7 @@ Most changes are backward compatible. These behaviours differ (checked against `
 
 ### Added
 
+- CLI `--version` prints the package version (exit 0), and the `serve` ready line carries `"version"`, so clients can tell a 0.6.0+ CLI from an older one that has neither.
 - CLI `serve`: persistent JSON-lines server. Prints `{"ready":true,"model","dimension"}`, handles one `{id, texts}` request per line sequentially, replies `{id, vectors}` or `{id, error}` (`id: null` for malformed lines), and exits 0 on EOF.
 - CLI `info [--json]`, and `--cache-dir` and `--dtype` flags. `--provider` is validated, and a value flag with no value is a usage error (exit 1).
 - Transformers `dtype` option (`fp32`, `fp16`, `q8`, `int8`, `uint8`, `q4`, `bnb4`, `q4f16`, `auto`); a non-default dtype is appended to the model id. `q8` was measured at about 3x faster batch embedding with cosine similarity of about 0.99 to fp32.

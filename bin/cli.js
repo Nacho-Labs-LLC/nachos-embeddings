@@ -16,9 +16,11 @@
  *
  * Flags:
  *   embed                subcommand: one-shot embedding
+ *   --version            print the package version and exit 0
  *   serve                subcommand: persistent JSON-lines server. Loads the
  *                        provider once, prints
- *                        {"ready":true,"model":"<id>","dimension":<n>},
+ *                        {"ready":true,"version":"<semver>","model":"<id>",
+ *                        "dimension":<n>},
  *                        then for each stdin line {"id":n,"texts":[...]}
  *                        replies {"id":n,"vectors":[[...]]} or
  *                        {"id":n,"error":"..."}. Exits 0 on stdin EOF.
@@ -93,11 +95,18 @@
  * All diagnostics go to stderr so stdout stays pure JSONL.
  */
 
+import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { Embedder } from "../dist/embedder.js";
 import { OFFLINE_ENV_VAR, isOfflineEnv } from "../dist/offline.js";
 
 const PROVIDERS = ["transformers", "bedrock"];
+
+// The package's own version, for `--version` and the serve ready line, so clients can
+// tell which CLI feature set they are talking to.
+const VERSION = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
 
 const VALUE_OPTIONS = {
   "--provider": "provider",
@@ -273,6 +282,7 @@ const USAGE =
   "       nachos-embeddings info <model> [--dtype <type>] [--json]\n" +
   "       nachos-embeddings serve [options]\n" +
   "       nachos-embeddings info [--json] [options]\n" +
+  "       nachos-embeddings --version\n" +
   "options: [--provider transformers|bedrock] [--model <id>] [--region <r>]\n" +
   "         [--cache-dir <dir>] [--dtype <fp32|fp16|q8|q4|...>]\n" +
   "         [--type query|document] [--pooling mean|cls] [--max-length <tokens>]\n" +
@@ -447,6 +457,7 @@ async function runServe(args) {
     : undefined;
   writeJson({
     ready: true,
+    version: VERSION,
     model: modelId(provider),
     dimension: await provider.getDimension(),
     ...embeddingSettings(provider),
@@ -524,6 +535,10 @@ function usageError(message) {
 
 async function main() {
   process.stdout.on("error", handleStdoutError);
+  if (process.argv.length === 3 && process.argv[2] === "--version") {
+    process.stdout.write(`${VERSION}\n`);
+    return;
+  }
   let args;
   try {
     args = parseArgs(process.argv.slice(2));
