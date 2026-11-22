@@ -12,6 +12,7 @@ vi.mock("@huggingface/transformers", () => ({
 }));
 
 import {
+  layerNormThenNormalize,
   TransformersProvider,
   resolveDefaultCacheDir,
   TRANSFORMERS_DEFAULT_MODEL,
@@ -457,5 +458,39 @@ describe("TransformersProvider prefixes, pooling and batching", () => {
       max_length: 64,
     });
     expect(limited.provider.getConfig().maxLength).toBe(64);
+  });
+
+  it("layer-norms then normalizes nomic vectors, and leaves others to the pipeline", async () => {
+    const nomic = await load({ model: "nomic-ai/nomic-embed-text-v1.5" });
+    expect(nomic.extractor.mock.calls.length).toBe(0);
+    const vec = await nomic.provider.embed("abcd", { type: "query" });
+    expect(nomic.extractor).toHaveBeenCalledWith("search_query: abcd", {
+      pooling: "mean",
+      normalize: false,
+    });
+    expect(Math.hypot(...vec)).toBeCloseTo(1, 6);
+    expect(vec).toEqual(layerNormThenNormalize([18, 0.5, 0.25]));
+    const batch = await nomic.provider.embedBatch(["ab", "abcd"]);
+    expect(Math.hypot(...(batch[1] as number[]))).toBeCloseTo(1, 6);
+
+    const bge = await load({ model: "BAAI/bge-small-en-v1.5" });
+    await bge.provider.embed("x");
+    expect(bge.extractor.mock.calls[0]?.[1]).toEqual({
+      pooling: "cls",
+      normalize: true,
+    });
+  });
+});
+
+describe("layerNormThenNormalize", () => {
+  it("matches a hand-computed layer norm followed by L2 normalization", () => {
+    // [1,3]: mean 2, var 1 -> [-1,1]/sqrt(1+1e-5) -> L2 normalized [-s, s]
+    const out = layerNormThenNormalize([1, 3]);
+    expect(out[0]).toBeCloseTo(-Math.SQRT1_2, 6);
+    expect(out[1]).toBeCloseTo(Math.SQRT1_2, 6);
+  });
+
+  it("returns zeros for a constant row instead of NaN", () => {
+    expect(layerNormThenNormalize([2, 2, 2])).toEqual([0, 0, 0]);
   });
 });

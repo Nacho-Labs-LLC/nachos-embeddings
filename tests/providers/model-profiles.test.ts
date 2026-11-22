@@ -20,14 +20,42 @@ describe("getModelProfile", () => {
       "search_query: ",
       "search_document: ",
     ],
+    ["Snowflake/snowflake-arctic-embed-xs", "cls", BGE_QUERY, ""],
+    ["Snowflake/snowflake-arctic-embed-s", "cls", BGE_QUERY, ""],
+    ["Snowflake/snowflake-arctic-embed-m", "cls", BGE_QUERY, ""],
+    ["Snowflake/snowflake-arctic-embed-m-v1.5", "cls", BGE_QUERY, ""],
+    ["Snowflake/snowflake-arctic-embed-m-long", "cls", BGE_QUERY, ""],
+    ["Snowflake/snowflake-arctic-embed-l", "cls", BGE_QUERY, ""],
+    ["Snowflake/snowflake-arctic-embed-m-v2.0", "cls", "query: ", ""],
+    ["Snowflake/snowflake-arctic-embed-l-v2.0", "cls", "query: ", ""],
+    ["Alibaba-NLP/gte-modernbert-base", "cls", "", ""],
     ["Xenova/all-MiniLM-L6-v2", "mean", "", ""],
     ["some/unknown-model", "mean", "", ""],
   ])("%s", (model, pooling, queryPrefix, documentPrefix) => {
-    expect(getModelProfile(model)).toEqual({
+    expect(getModelProfile(model)).toMatchObject({
       pooling,
       queryPrefix,
       documentPrefix,
     });
+  });
+
+  it("requires layer norm only for nomic-embed-text-v1.5", () => {
+    expect(getModelProfile("nomic-ai/nomic-embed-text-v1.5").layerNorm).toBe(
+      true,
+    );
+    for (const id of [
+      "BAAI/bge-small-en-v1.5",
+      "intfloat/e5-small-v2",
+      "Snowflake/snowflake-arctic-embed-s",
+      "Alibaba-NLP/gte-modernbert-base",
+      "Xenova/all-MiniLM-L6-v2",
+    ]) {
+      expect(getModelProfile(id).layerNorm).toBe(false);
+    }
+  });
+
+  it("does not treat other gte models as modernbert", () => {
+    expect(getModelProfile("thenlper/gte-base").pooling).toBe("mean");
   });
 
   it("is case-insensitive and returns a fresh copy", () => {

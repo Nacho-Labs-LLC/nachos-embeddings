@@ -201,14 +201,17 @@ The in-memory store suits tens of thousands of vectors at most; beyond that use 
 
 **Query vs document, prefixes and pooling.** Retrieval models are trained with asymmetric inputs: a search query and the passages it should find get different prefixes. `embed()` and `embedBatch()` take `{ type: "query" | "document" }` (default `"document"`, which is what 0.5.x did). `SemanticSearch` embeds documents as `"document"` and `search()` queries as `"query"` for you. Prefixes and pooling default per model from a small built-in table (matched on the model id, case-insensitive):
 
-| Model id contains          | Pooling | Query prefix                                                | Document prefix     |
-| -------------------------- | ------- | ----------------------------------------------------------- | ------------------- |
-| `e5-` (e5-small-v2, ...)   | `mean`  | `query: `                                                   | `passage: `         |
-| `bge-*-en-v1.5`            | `cls`   | `Represent this sentence for searching relevant passages: ` | none                |
-| `nomic-embed-text-v1.5`    | `mean`  | `search_query: `                                            | `search_document: ` |
-| MiniLM and any other model | `mean`  | none                                                        | none                |
+| Model id contains                                        | Pooling | Query prefix                                                | Document prefix     |
+| -------------------------------------------------------- | ------- | ----------------------------------------------------------- | ------------------- |
+| `e5-` (e5-small-v2, ...)                                 | `mean`  | `query: `                                                   | `passage: `         |
+| `bge-*-en-v1.5`                                          | `cls`   | `Represent this sentence for searching relevant passages: ` | none                |
+| `nomic-embed-text-v1.5`                                  | `mean`  | `search_query: `                                            | `search_document: ` |
+| `snowflake-arctic-embed-*` (xs, s, m, l, m-long, m-v1.5) | `cls`   | `Represent this sentence for searching relevant passages: ` | none                |
+| `snowflake-arctic-embed-*-v2.0` (m, l)                   | `cls`   | `query: `                                                   | none                |
+| `gte-modernbert-base`                                    | `cls`   | none                                                        | none                |
+| MiniLM and any other model                               | `mean`  | none                                                        | none                |
 
-Override with the `pooling` (`mean` or `cls`), `queryPrefix` and `documentPrefix` options (CLI: `--pooling`, `--query-prefix`, `--document-prefix`; pass `""` to disable a prefix). Vectors are always L2-normalized. `getConfig()` reports the active values. An overridden `pooling` or `documentPrefix` that differs from the model's default is appended to `getModelId()` (e.g. `...:pooling=cls`), because it changes stored vectors. Switching a prefixed model from 0.5.x to this release changes its document vectors (0.5.x embedded without prefixes), so re-index.
+Override with the `pooling` (`mean` or `cls`), `queryPrefix` and `documentPrefix` options (CLI: `--pooling`, `--query-prefix`, `--document-prefix`; pass `""` to disable a prefix). Vectors are always L2-normalized. `nomic-embed-text-v1.5` additionally gets the parameter-free layer norm between pooling and normalization that its model card prescribes (built in, not configurable). `getConfig()` reports the active values. An overridden `pooling` or `documentPrefix` that differs from the model's default is appended to `getModelId()` (e.g. `...:pooling=cls`), because it changes stored vectors. Switching a prefixed model from 0.5.x to this release changes its document vectors (0.5.x embedded without prefixes), so re-index.
 
 **Truncation.** Inputs are truncated to the tokenizer's own limit (`model_max_length`, typically 512 tokens, fewer for some models); longer text is cut silently, never an error. `maxLength` (CLI `--max-length <tokens>`) lowers that limit, counting special tokens; it cannot raise it. For long documents use `autoChunk` instead of relying on truncation.
 
@@ -216,14 +219,16 @@ Override with the `pooling` (`mean` or `cls`), `queryPrefix` and `documentPrefix
 
 #### Recommended retrieval models
 
-The default `Xenova/all-MiniLM-L6-v2` is a fine general starter. For retrieval, models trained with query/document prefixes usually rank better. Sizes are the fp32 `model.onnx` download (`dtype: "q8"` is smaller); all four rows were run end to end in this release (info, embed, serve, ranking a query against four documents).
+The default `Xenova/all-MiniLM-L6-v2` is a fine general starter. For retrieval, models trained with query/document prefixes usually rank better. Sizes are the fp32 `model.onnx` download (`dtype: "q8"` is smaller); rows marked smoke-tested were run end to end in this release (info, embed, serve, ranking a query against four documents); the q8 size is the `model_quantized.onnx` download, and latency is the median of 20 single-text `embed()` calls on a 16-core CPU.
 
-| Model                            | Dim | Download (fp32) | Notes                                                                                                   |
-| -------------------------------- | --- | --------------- | ------------------------------------------------------------------------------------------------------- |
-| `Xenova/all-MiniLM-L6-v2`        | 384 | 90 MB           | Default. No prefixes.                                                                                   |
-| `BAAI/bge-small-en-v1.5`         | 384 | 133 MB          | `cls` pooling, query instruction. Smoke-tested.                                                         |
-| `Xenova/e5-small-v2`             | 384 | 133 MB          | `query: ` / `passage: `. Smoke-tested. Use the `Xenova/` repo: `intfloat/e5-small-v2` has no ONNX file. |
-| `nomic-ai/nomic-embed-text-v1.5` | 768 | 547 MB          | `search_query: ` / `search_document: `. Smoke-tested.                                                   |
+| Model                                | Dim | Download (fp32 / q8) | Notes                                                                                                   |
+| ------------------------------------ | --- | -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Xenova/all-MiniLM-L6-v2`            | 384 | 90 MB / -            | Default. No prefixes.                                                                                   |
+| `BAAI/bge-small-en-v1.5`             | 384 | 133 MB / -           | `cls` pooling, query instruction. Smoke-tested.                                                         |
+| `Xenova/e5-small-v2`                 | 384 | 133 MB / -           | `query: ` / `passage: `. Smoke-tested. Use the `Xenova/` repo: `intfloat/e5-small-v2` has no ONNX file. |
+| `nomic-ai/nomic-embed-text-v1.5`     | 768 | 547 MB / -           | `search_query: ` / `search_document: `, plus layer norm. Smoke-tested.                                  |
+| `Snowflake/snowflake-arctic-embed-s` | 384 | 133 MB / 34 MB       | `cls` pooling, query instruction. Smoke-tested: 16.6 ms fp32, 4.8 ms q8 per text.                       |
+| `Alibaba-NLP/gte-modernbert-base`    | 768 | 596 MB / 150 MB      | `cls` pooling, no prefixes, long context. Smoke-tested: 36 ms fp32, 17 ms q8 per text.                  |
 
 ```bash
 npx nachos-embeddings serve --model BAAI/bge-small-en-v1.5

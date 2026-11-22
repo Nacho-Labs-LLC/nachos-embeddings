@@ -167,6 +167,23 @@ function withMaxLength(
   return extractor;
 }
 
+/**
+ * Parameter-free layer norm (torch default eps 1e-5) followed by L2
+ * normalization, as nomic-embed-text-v1.5's card prescribes after pooling.
+ */
+export function layerNormThenNormalize(row: ArrayLike<number>): number[] {
+  const n = row.length;
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += row[i] as number;
+  mean /= n;
+  let variance = 0;
+  for (let i = 0; i < n; i++) variance += ((row[i] as number) - mean) ** 2;
+  const scale = 1 / Math.sqrt(variance / n + 1e-5);
+  const out = Array.from(row, (x) => (x - mean) * scale);
+  const norm = Math.hypot(...out) || 1;
+  return out.map((x) => x / norm);
+}
+
 function validateConfig(config: TransformersProviderConfig): void {
   if (
     config.dtype !== undefined &&
@@ -257,17 +274,28 @@ export class TransformersProvider implements EmbeddingProvider {
     return prefix ? texts.map((text) => prefix + text) : texts;
   }
 
+  /** Layer-norm models are normalized by `finish`, after the layer norm. */
+  private callOptions() {
+    return {
+      pooling: this.config.pooling,
+      normalize: !this.defaults.layerNorm,
+    };
+  }
+
+  private finish(row: Float32Array): number[] {
+    return this.defaults.layerNorm
+      ? layerNormThenNormalize(row)
+      : Array.from(row);
+  }
+
   async embed(text: string, options?: EmbedOptions): Promise<number[]> {
     if (!this.initialized || !this.pipeline) {
       throw new Error("Embedder not initialized. Call init() first.");
     }
     const [input] = this.prepare([text], options);
-    const output = await this.pipeline(input as string, {
-      pooling: this.config.pooling,
-      normalize: true,
-    });
+    const output = await this.pipeline(input as string, this.callOptions());
 
-    return Array.from(output.data);
+    return this.finish(output.data as Float32Array);
   }
 
   /**
@@ -294,12 +322,12 @@ export class TransformersProvider implements EmbeddingProvider {
       const indices = order.slice(i, i + BATCH_SIZE);
       const output = await extractor(
         indices.map((index) => inputs[index] as string),
-        { pooling: this.config.pooling, normalize: true },
+        this.callOptions(),
       );
       const dim = output.dims[1] ?? 0;
       const data = output.data as Float32Array;
       indices.forEach((index, row) => {
-        embeddings[index] = Array.from(
+        embeddings[index] = this.finish(
           data.subarray(row * dim, (row + 1) * dim),
         );
       });

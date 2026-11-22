@@ -19,13 +19,22 @@ export interface ModelProfile {
   pooling: PoolingMode;
   queryPrefix: string;
   documentPrefix: string;
+  /**
+   * Parameter-free layer norm between pooling and L2 normalization, as the
+   * model card requires (nomic-embed-text-v1.5). Not user-overridable.
+   */
+  layerNorm: boolean;
 }
 
 const NO_PROFILE: ModelProfile = {
   pooling: "mean",
   queryPrefix: "",
   documentPrefix: "",
+  layerNorm: false,
 };
+
+const BGE_INSTRUCTION =
+  "Represent this sentence for searching relevant passages: ";
 
 const PROFILES: ReadonlyArray<{ match: RegExp; profile: ModelProfile }> = [
   {
@@ -34,14 +43,45 @@ const PROFILES: ReadonlyArray<{ match: RegExp; profile: ModelProfile }> = [
       pooling: "mean",
       queryPrefix: "query: ",
       documentPrefix: "passage: ",
+      layerNorm: false,
     },
   },
   {
     match: /bge-.*-en-v1\.5/,
     profile: {
       pooling: "cls",
-      queryPrefix: "Represent this sentence for searching relevant passages: ",
+      queryPrefix: BGE_INSTRUCTION,
       documentPrefix: "",
+      layerNorm: false,
+    },
+  },
+  // Snowflake arctic-embed v2.0 (m, l) switched to the plain "query: " prefix.
+  {
+    match: /snowflake-arctic-embed-[a-z]+-v2\.0/,
+    profile: {
+      pooling: "cls",
+      queryPrefix: "query: ",
+      documentPrefix: "",
+      layerNorm: false,
+    },
+  },
+  // arctic-embed xs, s, m, l, m-long, m-v1.5: bge-style instruction.
+  {
+    match: /snowflake-arctic-embed-/,
+    profile: {
+      pooling: "cls",
+      queryPrefix: BGE_INSTRUCTION,
+      documentPrefix: "",
+      layerNorm: false,
+    },
+  },
+  {
+    match: /gte-modernbert/,
+    profile: {
+      pooling: "cls",
+      queryPrefix: "",
+      documentPrefix: "",
+      layerNorm: false,
     },
   },
   {
@@ -50,6 +90,7 @@ const PROFILES: ReadonlyArray<{ match: RegExp; profile: ModelProfile }> = [
       pooling: "mean",
       queryPrefix: "search_query: ",
       documentPrefix: "search_document: ",
+      layerNorm: true,
     },
   },
 ];
