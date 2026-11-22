@@ -340,7 +340,7 @@ npx nachos-embeddings info <model> [--dtype q8]          # describe a model id o
 
 | Flag                                          | Applies to   | Description                                                                                                                   |
 | --------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `--version`                                   | alone        | Print the package version and exit 0 (clients use it to detect the feature set; releases before 0.6.0 have no such flag).     |
+| `--version`                                   | alone        | Print the package version and exit 0 (clients use it to detect the feature set; releases before 0.7.0 have no such flag).     |
 | `--stdin`, `--json`                           | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output.                                          |
 | `--provider <name>`                           | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.                                                        |
 | `--model <id>`                                | all          | Transformers model name, or Bedrock model id.                                                                                 |
@@ -363,7 +363,7 @@ npx nachos-embeddings info <model> [--dtype q8]          # describe a model id o
 ```json
 {
   "ready": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "model": "Xenova/all-MiniLM-L6-v2",
   "dimension": 384,
   "pooling": "mean",
@@ -411,8 +411,15 @@ A malformed line, a request without a `texts` array, or an unknown `type` gets a
 - **Corrupt stores now throw.** `init()`/`load()` reject with `StoreCorruptError` instead of being treated as empty and overwritten. Use `onCorruptStore: "quarantine"` for the old forgiving behaviour. A base `SemanticSearch` with `storePath` now also loads it on `init()`.
 - **Silent by default.** The library no longer writes to the console. Pass `logger` or `verbose: true`.
 - **`BedrockProvider.getConfig()`** returns `"[redacted]"` for `secretAccessKey` and `sessionToken`, and copies rather than internal objects.
-- **Vectors changed for e5 and nomic.** Documents now carry the model's trained prefix (and nomic gets its layer norm), so re-index stores built with those models. MiniLM (the default) and bge documents are unchanged.
 - Temporal boost is now applied before `limit`, so results can change order for `temporalBoost` users.
+
+## Migrating from 0.6.x
+
+- **Vectors changed for e5, bge and nomic models. Re-index stores built with them.** Documents and queries now carry each model's trained prefix, bge uses cls pooling, and nomic gets its layer norm (see [Providers](#providers)). `SemanticSearch` embeds documents as `"document"` and queries as `"query"`. MiniLM (the default) and unknown models are unchanged. Pass `queryPrefix: ""`, `documentPrefix: ""` and `pooling: "mean"` to reproduce 0.6.0 vectors.
+- **`serve --max-length` applies to the embedding model only.** The reranker has its own `--rerank-max-length`.
+- **`getModelId()` includes vector-changing overrides** (pooling, document prefix, `normalize=false`).
+- Loading a cached model makes no network request; ids that look like paths (`./dir`, `/abs/dir`, `~/dir`, `file://`) load as local directories.
+- The 0.6.0 CLI has no `--version`; clients can treat that as older than 0.7.0.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 

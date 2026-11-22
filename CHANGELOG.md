@@ -1,34 +1,25 @@
 # Changelog
 
-## 0.6.0
+## 0.7.0
 
-### Migration from 0.5.x
+Adds query/document input types with per-model prefixes and pooling, more model profiles, a local cross-encoder reranker, offline mode, and customizable models. Everything new is additive except the vector changes listed under "Migration from 0.6.x".
 
-Most changes are backward compatible. These behaviours differ (checked against `git diff master..HEAD` of `src/` and `bin/`); the README has a matching "Migrating from 0.5.x" section.
+### Migration from 0.6.x
 
-- **Model cache moved.** The default Transformers cache was `.cache/transformers` relative to the working directory; it is now per-user (`$NACHOS_EMBEDDINGS_CACHE`, else `$XDG_CACHE_HOME/nachos-embeddings`, else `~/.cache/nachos-embeddings`; Windows `%LOCALAPPDATA%\nachos-embeddings`). The first run re-downloads the model (~90MB). Set `NACHOS_EMBEDDINGS_CACHE` to the old path, or move the directory, to keep it. An explicit `cacheDir` / `--cache-dir` still wins.
-- **`BedrockProvider.getConfig()` redacts secrets.** `secretAccessKey` and `sessionToken` return `"[redacted]"`, and nested objects are copies. Code that read the real values from `getConfig()` must keep them itself.
-- **Corrupt stores throw.** `init()`/`load()` reject with `StoreCorruptError` and the file is never overwritten. Use `onCorruptStore: "quarantine"` for the old forgiving behaviour. A base `SemanticSearch` with `storePath` now also loads the file on `init()`.
-- **Silent by default.** The library no longer writes to the console; pass `logger` or `verbose: true`. (Bedrock `progressLogging` is the explicit opt-in exception.)
-- **Different vectors for some models.** e5 and nomic documents now carry their trained prefix, and nomic applies its layer norm, so vectors differ from 0.5.x. Re-index stores built with those models. MiniLM (the default) and bge documents are unchanged. `getModelId()` also includes overrides that change document vectors.
-- **Temporal boost is applied before `limit`**, so `temporalBoost` users may see different results or ordering.
-- **`EnhancedSemanticSearch` is a deprecated alias** of `SemanticSearch` (option mapping in the README). Defaults still differ: `SemanticSearch` uses `deduplicate: "exact"`, the alias `"normalized"` and `.semantic-store.json`.
-- **Types.** `Embedder.getConfig()` returns `ResolvedTransformersConfig`; `VectorStoreConfig.cacheEmbeddings` is deprecated and no longer part of the resolved config; `EmbeddingProvider.embed/embedBatch` take an optional second `EmbedOptions` argument and gain optional `getModelId()` / `dispose()` (custom providers keep compiling).
-- **CLI.** The CLI was embed-only in 0.5.2 (`embed --stdin --json`), which is unchanged. New subcommands (`serve`, `info`, `models`, `pull`, `rerank`), flags and `--offline` are additive; unknown subcommands/providers and flags missing a value exit 1 with usage. Bedrock provider init errors that are not a missing module now say `Failed to load <module>: ...` instead of the install hint.
-- **`serve` protocol additions (all optional, existing readers unaffected).** Ready line gains `pooling`, `queryPrefix`, `documentPrefix`, optional `maxLength`, `rerank`, `offline`; requests may carry `type` or `op: "rerank"`. `serve --max-length` applies to the embedding model only; use `--rerank-max-length` for the reranker.
-- **Removed:** local `release:*`, `version:*` and `publish:npm` npm scripts (releases are published from CI), source and declaration maps from the package, and `docs/claude-code-integration.md`.
+Checked against `git diff origin/master..HEAD -- src bin` (master being the published 0.6.0).
+
+- **Vectors change for e5, bge and nomic models. Re-index stores built with them.** 0.6.0 embedded every text the same way (mean pooling, no prefix). Now e5 documents carry `passage: ` (and queries `query: `), nomic documents carry `search_document: ` (queries `search_query: `) and nomic applies the layer norm its card prescribes (cosine about 0.9999 to the previous vectors, plus the prefix change), and bge models switch to cls pooling with the retrieval instruction on queries. MiniLM (the default) and unknown models are unchanged. `SemanticSearch` now embeds documents as `"document"` and `search()` queries as `"query"`, so the query side of a store changes too. Pass `queryPrefix: ""`, `documentPrefix: ""` and `pooling: "mean"` to reproduce 0.6.0 vectors for a model.
+- **`serve --max-length` no longer applies to the reranker.** In `serve`, `--max-length` is for the embedding model only; the reranker has its own `--rerank-max-length`. (`rerank` still falls back to `--max-length`.)
+- **`getModelId()` can differ.** It now appends overrides that change vectors (`:pooling=...`, a document prefix, `normalize=false`), so a store keyed on the id sees a new id when you set those.
+- **Model loading is cache-first.** A fully cached model now loads with no network request; files are downloaded only when missing. Before, Transformers.js asked the hub on every load.
+- **`EmbeddingProvider.embed/embedBatch` take an optional second `EmbedOptions` argument.** Existing custom providers keep compiling and ignore it.
+- **`serve` ready line and `info` gain optional fields** (`version`, `pooling`, `queryPrefix`, `documentPrefix`, `maxLength`, `normalize`, `rerank`, `offline`). Existing readers that ignore unknown keys are unaffected. Requests may also carry `type` or `op: "rerank"`.
+- **Model ids that look like paths** (`./dir`, `/abs/dir`, `~/dir`, `file://...`) are now loaded as local directories instead of being sent to the hub.
+- **Version detection.** The 0.6.0 CLI has no `--version` and no `version` in the ready line. Clients can treat a CLI without them as older than 0.7.0.
 
 ### Added
 
-- CLI `--version` prints the package version (exit 0), and the `serve` ready line carries `"version"`, so clients can tell a 0.6.0+ CLI from an older one that has neither.
-- CLI `serve`: persistent JSON-lines server. Prints `{"ready":true,"model","dimension"}`, handles one `{id, texts}` request per line sequentially, replies `{id, vectors}` or `{id, error}` (`id: null` for malformed lines), and exits 0 on EOF.
-- CLI `info [--json]`, and `--cache-dir` and `--dtype` flags. `--provider` is validated, and a value flag with no value is a usage error (exit 1).
-- Transformers `dtype` option (`fp32`, `fp16`, `q8`, `int8`, `uint8`, `q4`, `bnb4`, `q4f16`, `auto`); a non-default dtype is appended to the model id. `q8` was measured at about 3x faster batch embedding with cosine similarity of about 0.99 to fp32.
-- Optional `dispose()` and `getModelId()` on `EmbeddingProvider`, implemented for Transformers and Bedrock; the CLI disposes the provider on completion.
-- Exported defaults and helpers: `TRANSFORMERS_DEFAULT_MODEL`, `TRANSFORMERS_DEFAULT_DIMENSION`, `TRANSFORMERS_DTYPES`, `resolveDefaultCacheDir`, `BEDROCK_DEFAULT_MODEL_ID`, `BEDROCK_DEFAULT_REGION` (the Bedrock ones from `/bedrock`).
-- `SemanticSearch` options: `deduplicate` (`"off"`, `"exact"`, `"normalized"`, `{ similarity }`), `autoSave`, `storePath`, `loadOnInit`, `onCorruptStore`, `autoChunk`, `maxChunkTokens`, `chunkOverlap`, `temporalBoost` (also per search), `logger`, `verbose`, `onError`. New methods `getDocument`, `listDocuments`, `load`, `persist`, `getConfig`.
-- `StoreCorruptError` (with `path`), and exported types `SemanticSearchOptions`, `SemanticSearchLogger`, `DeduplicateOption`, `ResolvedSemanticSearchConfig`.
-
+- CLI `--version` prints the package version (exit 0), and the `serve` ready line carries `"version"`, so clients can tell a 0.7.0+ CLI from an older one that has neither.
 - Query/document input types: `embed(text, { type })` and `embedBatch(texts, { type })` (`"query"` or `"document"`, default `"document"`), CLI `embed --type`, and an optional per-request `"type"` in `serve` (requests without it behave as before). `SemanticSearch` embeds documents as `"document"` and `search()` queries as `"query"`.
 - Built-in per-model prefix and pooling table (e5: `query: ` / `passage: `; bge-*-en-v1.5: cls pooling and the retrieval instruction on queries; nomic-embed-text-v1.5: `search_query: ` / `search_document: `; MiniLM and unknown models: none, mean), overridable with `queryPrefix`, `documentPrefix`, `pooling` options and `--query-prefix`, `--document-prefix`, `--pooling`. Exports `getModelProfile`, `POOLING_MODES`, `INPUT_TYPES` and the `EmbedOptions`, `PoolingMode`, `InputType`, `ModelProfile` types. Overrides that change document vectors are appended to `getModelId()`.
 - Prefix/pooling profiles for `snowflake-arctic-embed-*` (cls; `Represent this sentence for searching relevant passages: ` on queries, or `query: ` for the v2.0 models) and `gte-modernbert-base` (cls, no prefixes), checked against their model cards. `nomic-embed-text-v1.5` now applies the card's layer norm between mean pooling and L2 normalization (vectors change slightly, cosine about 0.9999 to the previous ones).
@@ -47,7 +38,30 @@ Most changes are backward compatible. These behaviours differ (checked against `
 ### Changed
 
 - Transformers `embedBatch` now makes one padded pipeline call per chunk of 8 texts (length-sorted, results in input order) instead of concurrent single-text calls: 1.0x to 1.8x faster in a CPU benchmark, vectors match single calls (cosine > 0.999).
-- Models in the prefix table now embed documents with their trained prefix (e5: `passage: `, nomic: `search_document: `), so vectors for those models differ from 0.5.x. Re-index if you use them. MiniLM (the default) and bge documents are unchanged.
+- `info` and the `serve` ready line report the active pooling and prefixes for the transformers provider.
+- Tests no longer depend on the real model cache: provider tests use a tiny local model fixture, and a network blocker (`scripts/block-network.mjs`) backs the offline tests. The packed-tarball smoke test (`SMOKE_MODEL=1`) also covers `rerank`, `serve` ops and offline loading.
+
+## 0.6.0
+
+**Breaking / migration.** Most changes are backward compatible, but four behaviours differ. See "Migrating from 0.5.x" in the README.
+
+- The default Transformers model cache moved from `.cache/transformers` (relative to the working directory) to a per-user directory. The first run re-downloads the model (~90MB). Set `NACHOS_EMBEDDINGS_CACHE` to the old path, or move the directory, to keep it.
+- A corrupt or malformed store file now makes `init()`/`load()` reject with `StoreCorruptError` and is never overwritten. Use `onCorruptStore: "quarantine"` to start fresh.
+- The library no longer writes to the console. Pass `logger` or `verbose: true`.
+- `BedrockProvider.getConfig()` redacts `secretAccessKey` and `sessionToken`.
+
+### Added
+
+- CLI `serve`: persistent JSON-lines server. Prints `{"ready":true,"model","dimension"}`, handles one `{id, texts}` request per line sequentially, replies `{id, vectors}` or `{id, error}` (`id: null` for malformed lines), and exits 0 on EOF.
+- CLI `info [--json]`, and `--cache-dir` and `--dtype` flags. `--provider` is validated, and a value flag with no value is a usage error (exit 1).
+- Transformers `dtype` option (`fp32`, `fp16`, `q8`, `int8`, `uint8`, `q4`, `bnb4`, `q4f16`, `auto`); a non-default dtype is appended to the model id. `q8` was measured at about 3x faster batch embedding with cosine similarity of about 0.99 to fp32.
+- Optional `dispose()` and `getModelId()` on `EmbeddingProvider`, implemented for Transformers and Bedrock; the CLI disposes the provider on completion.
+- Exported defaults and helpers: `TRANSFORMERS_DEFAULT_MODEL`, `TRANSFORMERS_DEFAULT_DIMENSION`, `TRANSFORMERS_DTYPES`, `resolveDefaultCacheDir`, `BEDROCK_DEFAULT_MODEL_ID`, `BEDROCK_DEFAULT_REGION` (the Bedrock ones from `/bedrock`).
+- `SemanticSearch` options: `deduplicate` (`"off"`, `"exact"`, `"normalized"`, `{ similarity }`), `autoSave`, `storePath`, `loadOnInit`, `onCorruptStore`, `autoChunk`, `maxChunkTokens`, `chunkOverlap`, `temporalBoost` (also per search), `logger`, `verbose`, `onError`. New methods `getDocument`, `listDocuments`, `load`, `persist`, `getConfig`.
+- `StoreCorruptError` (with `path`), and exported types `SemanticSearchOptions`, `SemanticSearchLogger`, `DeduplicateOption`, `ResolvedSemanticSearchConfig`.
+
+### Changed
+
 - `SemanticSearch` and `EnhancedSemanticSearch` are unified: `SemanticSearch` carries every feature, and `EnhancedSemanticSearch` is a thin deprecated alias that maps the old options (`deduplicateExact`, `deduplicateSimilarity`, `forceSave()`, default `.semantic-store.json` with `autoSave`).
 - Base `SemanticSearch` now loads `storePath` on `init()` (it previously only wrote).
 - Persistence is a single serialized, coalescing write queue with atomic writes (temp file, fsync, rename), async fs only. `autoSave` failures go to `onError`/`logger` and are rethrown once by the next `persist()`.
