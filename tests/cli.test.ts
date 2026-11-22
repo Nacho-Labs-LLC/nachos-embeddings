@@ -771,4 +771,64 @@ describe("nachos-embeddings CLI", () => {
       expect(result.providers).toHaveLength(1);
     });
   });
+
+  describe("--rerank-max-length", () => {
+    it("serve gives the reranker its own length; --max-length stays with the embedder", () => {
+      const result = runCli(
+        [
+          "serve",
+          "--max-length",
+          "64",
+          "--rerank-model",
+          "r",
+          "--rerank-max-length",
+          "2048",
+        ],
+        "",
+      );
+      expect(result.providers[0].options).toEqual({ maxLength: 64 });
+      expect(result.rerankers).toEqual([
+        { options: { model: "r", maxLength: 2048 } },
+      ]);
+    });
+
+    it("serve without --rerank-max-length does not hand --max-length to the reranker", () => {
+      const result = runCli(
+        ["serve", "--max-length", "64", "--rerank-model", "r"],
+        "",
+      );
+      expect(result.rerankers).toEqual([{ options: { model: "r" } }]);
+    });
+
+    it("rerank uses --rerank-max-length, falling back to --max-length", () => {
+      const own = runCli(
+        [
+          "rerank",
+          "--query",
+          "q",
+          "--stdin",
+          "--json",
+          "--max-length",
+          "8",
+          "--rerank-max-length",
+          "99",
+        ],
+        "a\n",
+      );
+      expect(own.rerankers).toEqual([{ options: { maxLength: 99 } }]);
+      const fallback = runCli(
+        ["rerank", "--query", "q", "--stdin", "--json", "--max-length", "8"],
+        "a\n",
+      );
+      expect(fallback.rerankers).toEqual([{ options: { maxLength: 8 } }]);
+    });
+
+    it("rejects a non-integer value", () => {
+      const result = runCli(["serve", "--rerank-max-length", "x"]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "--rerank-max-length must be a positive integer",
+      );
+    });
+  });
 });

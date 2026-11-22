@@ -55,6 +55,9 @@
  *                        q8, 512 tokens); --rerank-model/--rerank-dtype also
  *                        work and take precedence.
  *   --query <q>          rerank only: the query text
+ *   --rerank-max-length <n> serve: truncation length of the reranker (its own
+ *                        setting; --max-length applies to the embedding model).
+ *                        In `rerank` it defaults to --max-length.
  *   --rerank-model <id>  serve: load this reranker at startup and accept
  *   --rerank-dtype <t>   {"id","op":"rerank","query","passages":[...]}
  *                        requests, replying {"id","scores":[...]}. Either flag
@@ -107,6 +110,7 @@ const VALUE_OPTIONS = {
   "--document-prefix": "documentPrefix",
   "--pooling": "pooling",
   "--max-length": "maxLength",
+  "--rerank-max-length": "rerankMaxLength",
   "--query": "query",
   "--rerank-model": "rerankModel",
   "--rerank-dtype": "rerankDtype",
@@ -130,6 +134,7 @@ function parseArgs(argv) {
     documentPrefix: undefined,
     pooling: undefined,
     maxLength: undefined,
+    rerankMaxLength: undefined,
     query: undefined,
     rerankModel: undefined,
     rerankDtype: undefined,
@@ -162,11 +167,15 @@ function parseArgs(argv) {
       `unknown kind '${args.kind}' (expected embedding|rerank)`,
     );
   }
-  if (args.maxLength !== undefined) {
-    if (!/^[1-9]\d*$/.test(args.maxLength)) {
-      throw new UsageError("--max-length must be a positive integer");
+  for (const [key, flag] of [
+    ["maxLength", "--max-length"],
+    ["rerankMaxLength", "--rerank-max-length"],
+  ]) {
+    if (args[key] === undefined) continue;
+    if (!/^[1-9]\d*$/.test(args[key])) {
+      throw new UsageError(`${flag} must be a positive integer`);
     }
-    args.maxLength = Number(args.maxLength);
+    args[key] = Number(args[key]);
   }
   return args;
 }
@@ -407,13 +416,13 @@ function handleStdoutError(err) {
 
 // The reranker is a separate model from the embedding provider. It is only
 // imported and loaded when asked for, so plain serve never touches it.
-async function makeReranker(args, { model, dtype }) {
+async function makeReranker(args, { model, dtype, maxLength }) {
   const { Reranker } = await import("../dist/reranker.js");
   const reranker = new Reranker({
     ...(model && { model }),
     ...(dtype && { dtype }),
     ...(args.cacheDir && { cacheDir: args.cacheDir }),
-    ...(args.maxLength !== undefined && { maxLength: args.maxLength }),
+    ...(maxLength !== undefined && { maxLength }),
     ...(args.offline && { offline: true }),
   });
   await reranker.init();
@@ -431,6 +440,8 @@ async function runServe(args) {
     ? await makeReranker(args, {
         model: args.rerankModel,
         dtype: args.rerankDtype,
+        // --max-length belongs to the embedding model in serve.
+        maxLength: args.rerankMaxLength,
       }).catch((e) => fail("rerank init failed", e))
     : undefined;
   writeJson({
@@ -541,6 +552,7 @@ async function runRerank(args) {
   const reranker = await makeReranker(args, {
     model: args.rerankModel ?? args.model,
     dtype: args.rerankDtype ?? args.dtype,
+    maxLength: args.rerankMaxLength ?? args.maxLength,
   }).catch((e) => fail("init failed", e));
   const scores = await reranker
     .rerank(args.query, passages)
@@ -573,9 +585,11 @@ async function runPull(args) {
   };
   let loaded;
   if (kind === "rerank") {
-    loaded = await makeReranker(args, { model, dtype: args.dtype }).catch((e) =>
-      fail("pull failed", e),
-    );
+    loaded = await makeReranker(args, {
+      model,
+      dtype: args.dtype,
+      maxLength: args.rerankMaxLength ?? args.maxLength,
+    }).catch((e) => fail("pull failed", e));
   } else {
     loaded = new Embedder(options);
     await loaded.init().catch((e) => fail("pull failed", e));
