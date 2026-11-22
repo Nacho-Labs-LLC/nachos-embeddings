@@ -91,3 +91,11 @@ export {
   type RerankOptions,
   type ResolvedRerankOptions,
 } from "./reranker.js";
+
+// Offline mode and reranker profiles
+export { OFFLINE_ENV_VAR, isOfflineEnv } from "./offline.js";
+export { ModelNotCachedError } from "./providers/model-loading.js";
+export {
+  getRerankerProfile,
+  type RerankerProfile,
+} from "./providers/reranker-profiles.js";

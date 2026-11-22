@@ -62,6 +62,7 @@ function createLoader() {
     export class Reranker {
       constructor(options) { this.options = options; log({ reranker: { options } }); }
       async init() { log({ rerankerInit: true }); }
+      getConfig() { return { cacheDir: this.options.cacheDir ?? "/stub/default-cache" }; }
       getModelId() {
         const { model = "stub-rerank-default", dtype } = this.options;
         return dtype ? model + ":" + dtype : model;
@@ -579,6 +580,110 @@ describe("nachos-embeddings CLI", () => {
       expect(serveLines(result.stdout)[0].rerank).toEqual({
         model: "stub-rerank-default:fp32",
       });
+    });
+  });
+
+  describe("offline and pull", () => {
+    it("--offline is forwarded to the embedder and the reranker", () => {
+      const embed = runCli(["embed", "--stdin", "--json", "--offline"], "a\n");
+      expect(embed.providers).toEqual([
+        { provider: "transformers", options: { offline: true } },
+      ]);
+      const rerank = runCli(
+        ["rerank", "--query", "q", "--stdin", "--json", "--offline"],
+        "a\n",
+      );
+      expect(rerank.rerankers).toEqual([{ options: { offline: true } }]);
+    });
+
+    it("without --offline the option is not passed (library env var decides)", () => {
+      const embed = runCli(["embed", "--stdin", "--json"], "a\n");
+      expect(embed.providers).toEqual([
+        { provider: "transformers", options: {} },
+      ]);
+    });
+
+    it("serve announces offline in the ready line only when enabled", () => {
+      const plain = runCli(["serve"], "");
+      expect(JSON.parse(plain.stdout.trim())).not.toHaveProperty("offline");
+      const flagged = runCli(["serve", "--offline"], "");
+      expect(JSON.parse(flagged.stdout.trim()).offline).toBe(true);
+    });
+
+    it("NACHOS_EMBEDDINGS_OFFLINE=1 also marks serve offline", () => {
+      const { command, options } = launchArgs(["serve"]);
+      const result = spawnSync(process.execPath, command, {
+        ...options,
+        env: { ...options.env, NACHOS_EMBEDDINGS_OFFLINE: "1" },
+        encoding: "utf8",
+        input: "",
+      });
+      expect(JSON.parse(result.stdout.trim()).offline).toBe(true);
+    });
+
+    it("bedrock refuses to run offline", () => {
+      const result = runCli(
+        ["embed", "--stdin", "--json", "--provider", "bedrock", "--offline"],
+        "a\n",
+      );
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("cannot be used in offline mode");
+      expect(result.providers).toEqual([]);
+    });
+
+    it("pull downloads an embedding model by default", () => {
+      const result = runCli([
+        "pull",
+        "some/embed-model",
+        "--dtype",
+        "q8",
+        "--cache-dir",
+        "/c",
+      ]);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        pulled: true,
+        kind: "embedding",
+        model: "some/embed-model:q8",
+        cacheDir: "/c",
+      });
+      expect(result.providers).toEqual([
+        {
+          provider: "transformers",
+          options: { model: "some/embed-model", dtype: "q8", cacheDir: "/c" },
+        },
+      ]);
+      expect(result.disposed).toEqual(["transformers"]);
+    });
+
+    it("pull treats reranker ids as rerankers, and --kind overrides", () => {
+      const named = runCli(["pull", "jinaai/jina-reranker-v1-tiny-en"]);
+      expect(JSON.parse(named.stdout).kind).toBe("rerank");
+      expect(named.rerankers).toEqual([
+        { options: { model: "jinaai/jina-reranker-v1-tiny-en" } },
+      ]);
+      expect(named.providers).toEqual([]);
+
+      const forced = runCli(["pull", "some/model", "--kind", "rerank"]);
+      expect(JSON.parse(forced.stdout).kind).toBe("rerank");
+      const other = runCli([
+        "pull",
+        "Xenova/ms-marco-MiniLM-L-6-v2",
+        "--kind",
+        "embedding",
+      ]);
+      expect(JSON.parse(other.stdout).kind).toBe("embedding");
+      expect(runCli(["pull", "m", "--kind", "bogus"]).status).toBe(1);
+    });
+
+    it("pull needs a model and refuses to run offline", () => {
+      expect(runCli(["pull"]).status).toBe(1);
+      const offline = runCli(["pull", "some/model", "--offline"]);
+      expect(offline.status).toBe(2);
+      expect(offline.stdout).toBe("");
+      expect(offline.stderr).toContain("pull needs network access");
+      expect(offline.providers).toEqual([]);
     });
   });
 });

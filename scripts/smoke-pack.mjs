@@ -11,7 +11,14 @@
  * verifies the tarball's own files, not its dependency resolution.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, mkdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  mkdirSync,
+  existsSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -200,6 +207,57 @@ function checkRerank(cli, env) {
   );
 }
 
+/**
+ * The model files are cached by now (the checks above downloaded them), so
+ * further runs must make no network request at all. Proof: each command runs
+ * with scripts/block-network.mjs preloaded, which makes every socket connect
+ * and DNS lookup throw and logs it. Any attempt fails the command and shows
+ * up in the log. Runs both without --offline (the default cache-first path)
+ * and with it.
+ */
+function checkNoNetwork(cli, env, workDir) {
+  const log = join(workDir, "network-attempts.log");
+  const blocker = join(repoRoot, "scripts", "block-network.mjs");
+  const blockedEnv = { ...env, BLOCK_NETWORK_LOG: log };
+  const commands = [
+    [["embed", "--stdin", "--json"], "hello\nworld\n"],
+    [["rerank", "--query", "q", "--stdin", "--json"], "a\nb\n"],
+    [["embed", "--stdin", "--json", "--offline"], "hello\n"],
+    [["rerank", "--query", "q", "--stdin", "--json", "--offline"], "a\n"],
+  ];
+  for (const [args, input] of commands) {
+    const result = run(process.execPath, ["--import", blocker, cli, ...args], {
+      env: blockedEnv,
+      input,
+      timeout: MODEL_TIMEOUT_MS,
+    });
+    const attempts = existsSync(log) ? readFileSync(log, "utf8").trim() : "";
+    check(
+      result.status === 0 && attempts === "",
+      `${args.join(" ")}: cached run makes no network requests (exit ${result.status}${attempts ? `, attempts: ${attempts}` : ""})`,
+    );
+  }
+  const missing = run(
+    process.execPath,
+    [
+      cli,
+      "embed",
+      "--stdin",
+      "--json",
+      "--offline",
+      "--cache-dir",
+      join(workDir, "empty-cache"),
+    ],
+    { env: blockedEnv, input: "hi\n", timeout: MODEL_TIMEOUT_MS },
+  );
+  check(
+    missing.status === 2 &&
+      missing.stderr.includes("not in the cache") &&
+      missing.stderr.includes("nachos-embeddings pull"),
+    "--offline with an empty cache fails clearly and makes no request",
+  );
+}
+
 async function main() {
   const workDir = mkdtempSync(join(tmpdir(), "nachos-smoke-"));
   try {
@@ -217,6 +275,7 @@ async function main() {
       checkEmbed(cli, env, info.dimension);
       await checkServe(cli, env, info.dimension);
       checkRerank(cli, env);
+      checkNoNetwork(cli, env, workDir);
     } else {
       console.log(
         "skip model checks (set SMOKE_MODEL=1 to run info/embed/serve/rerank)",

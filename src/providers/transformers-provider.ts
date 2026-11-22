@@ -6,9 +6,10 @@ import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import {
   pipeline,
-  env,
   type FeatureExtractionPipeline,
 } from "@huggingface/transformers";
+import { isOfflineEnv } from "../offline.js";
+import { loadModel } from "./model-loading.js";
 import type {
   EmbeddingProvider,
   BaseProviderConfig,
@@ -113,6 +114,15 @@ export interface TransformersProviderConfig extends BaseProviderConfig {
    * limit; longer text is silently cut, never an error.
    */
   maxLength?: number;
+
+  /**
+   * Never touch the network: load only from the cache and fail with
+   * `ModelNotCachedError` if the model is not there. Default: true when
+   * `NACHOS_EMBEDDINGS_OFFLINE=1`, else false. Even when false, a model that
+   * is fully cached loads without any network request; it is downloaded only
+   * when files are missing.
+   */
+  offline?: boolean;
 }
 
 export type ResolvedTransformersConfig = Required<
@@ -121,34 +131,6 @@ export type ResolvedTransformersConfig = Required<
 
 /** Texts per padded pipeline call in `embedBatch`. */
 const BATCH_SIZE = 8;
-
-/**
- * Transformers.js reads `env.allowLocalModels` from process-global state, so
- * loads are serialized and the flag is set only for the duration of a load
- * (then restored). Cache directory and dtype are passed per pipeline call and
- * do not depend on globals. Limitation: loads from different provider
- * instances run one at a time.
- */
-let loadLock: Promise<void> = Promise.resolve();
-
-export async function withRemoteModelsOnly<T>(
-  fn: () => Promise<T>,
-): Promise<T> {
-  const previous = loadLock;
-  let release!: () => void;
-  loadLock = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous;
-  const saved = env.allowLocalModels;
-  env.allowLocalModels = false;
-  try {
-    return await fn();
-  } finally {
-    env.allowLocalModels = saved;
-    release();
-  }
-}
 
 /**
  * transformers.js feature-extraction calls its tokenizer with
@@ -224,6 +206,7 @@ export class TransformersProvider implements EmbeddingProvider {
       model,
       cacheDir: config.cacheDir ?? resolveDefaultCacheDir(),
       progressLogging: config.progressLogging ?? false,
+      offline: config.offline ?? isOfflineEnv(),
       pooling: config.pooling ?? profile.pooling,
       queryPrefix: config.queryPrefix ?? profile.queryPrefix,
       documentPrefix: config.documentPrefix ?? profile.documentPrefix,
@@ -243,7 +226,7 @@ export class TransformersProvider implements EmbeddingProvider {
   }
 
   private async load(): Promise<void> {
-    const { model, cacheDir, dtype, progressLogging } = this.config;
+    const { model, cacheDir, dtype, progressLogging, offline } = this.config;
     if (progressLogging) {
       // eslint-disable-next-line no-console -- opt-in `progressLogging` is documented to log to the console
       console.log(`[TransformersProvider] Loading model: ${model}`);
@@ -251,11 +234,14 @@ export class TransformersProvider implements EmbeddingProvider {
       console.log(`[TransformersProvider] Cache dir: ${cacheDir}`);
     }
 
-    const loaded = await withRemoteModelsOnly(() =>
-      pipeline("feature-extraction", model, {
-        cache_dir: cacheDir,
-        ...(dtype !== undefined && { dtype }),
-      }),
+    const loaded = await loadModel(
+      { model, cacheDir, dtype, offline },
+      (extra) =>
+        pipeline("feature-extraction", model, {
+          cache_dir: cacheDir,
+          ...(dtype !== undefined && { dtype }),
+          ...extra,
+        }),
     );
     this.pipeline = this.config.maxLength
       ? withMaxLength(loaded, this.config.maxLength)

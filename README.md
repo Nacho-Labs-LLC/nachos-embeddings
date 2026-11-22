@@ -114,11 +114,25 @@ await embedder.init();
 const vec = await embedder.embed("hello"); // number[384]
 ```
 
-Options: `model`, `cacheDir`, `dtype`, `pooling`, `queryPrefix`, `documentPrefix`, `maxLength`, `progressLogging`. Methods: `init()`, `embed()`, `embedBatch()`, `getDimension()`, `getModelId()`, `getConfig()`, `isInitialized()`, `dispose()`.
+Options: `model`, `cacheDir`, `dtype`, `pooling`, `queryPrefix`, `documentPrefix`, `maxLength`, `offline`, `progressLogging`. Methods: `init()`, `embed()`, `embedBatch()`, `getDimension()`, `getModelId()`, `getConfig()`, `isInitialized()`, `dispose()`.
 
 **Cache directory**, first match wins: `cacheDir` option (CLI `--cache-dir`), `$NACHOS_EMBEDDINGS_CACHE`, `$XDG_CACHE_HOME/nachos-embeddings`, `~/.cache/nachos-embeddings`. On Windows: `%LOCALAPPDATA%\nachos-embeddings`. `resolveDefaultCacheDir()` returns the result.
 
 **dtype**: `auto`, `fp32`, `fp16`, `q8`, `int8`, `uint8`, `q4`, `bnb4`, `q4f16` (`TRANSFORMERS_DTYPES`). Unset uses the library default (fp32). In this release's benchmark, `q8` embedded batches about 3x faster than fp32, with cosine similarity of about 0.99 to the fp32 vectors. A non-default dtype is appended to the model id (`Xenova/all-MiniLM-L6-v2:q8`) and vectors differ from fp32, so do not mix them in one index.
+
+### Privacy and offline use
+
+Transformers.js 4 contacts the Hugging Face hub on **every** model load, even when every file is already cached: to decide which tokenizer files exist it sends a request for `tokenizer_config.json` that ignores the cache directory. Measured on this release, a fully cached MiniLM load resolved `huggingface.co` each time, which leaks that you are running the model and makes loads flaky or slow without a connection.
+
+This package avoids that for both the embedding and the reranker models:
+
+- **Cached means no network.** Before loading, it checks the cache for the model's `config.json`, `tokenizer.json`, `tokenizer_config.json` and the ONNX weights for the requested `dtype`. If they are all there, it loads with `local_files_only`, which makes no request. Files are downloaded only when some are missing (first use, or a new `dtype`).
+- **Offline mode never touches the network.** Pass `offline: true` (CLI `--offline`) or set `NACHOS_EMBEDDINGS_OFFLINE=1` (also `true`, `yes`, `on`). A model that is not fully cached then fails with a `ModelNotCachedError` that names the missing files and the fix, instead of downloading. The explicit option wins over the environment variable (`offline: false` overrides it). `BedrockProvider` is a network service, so the CLI refuses `--provider bedrock` in offline mode.
+- **`pull` pre-downloads.** `nachos-embeddings pull <model> [--dtype q8] [--cache-dir <dir>]` fetches an embedding or reranker model into the cache and prints `{"pulled":true,"kind","model","cacheDir"}`. The kind is guessed from the id (names containing `rerank`, `cross-encoder` or `ms-marco` are rerankers); `--kind embedding|rerank` overrides it. `pull` is the one command that needs the network, so it refuses to run with `--offline` or `NACHOS_EMBEDDINGS_OFFLINE=1`.
+
+Air-gapped setup: run `pull` on a connected machine for each model and dtype you will use, copy the cache directory (`$NACHOS_EMBEDDINGS_CACHE`, default `~/.cache/nachos-embeddings`) to the target, and run with `NACHOS_EMBEDDINGS_OFFLINE=1`. `serve` announces `"offline": true` in its ready line when offline mode is on.
+
+How this was verified: the vitest suite runs the real Transformers.js against a tiny cached tokenizer with a fake `env.fetch` (cached load: zero requests; the same load through plain Transformers.js: requests; offline plus a missing model: a clear error and zero requests). The packed-tarball smoke test (`SMOKE_MODEL=1 npm run smoke:pack`) then runs the real models a second time under `scripts/block-network.mjs`, a preload that patches the socket layer (`net.Socket#connect` and `dns`, which fetch, undici, http and https all use) to throw and log any attempt, and checks that embed and rerank succeed with an empty attempt log, with and without `--offline`. Not covered: this proves the package's own load path; it cannot vouch for other code in your process.
 
 ### AWS Bedrock
 
@@ -253,7 +267,7 @@ const scores = await rerank("how many people live in Berlin?", [
 - **Scores** are `sigmoid(logit)`, so they lie in (0, 1) and higher is more relevant. Both supported models are single-logit cross-encoders trained with a sigmoid head, and their reference implementations apply the same sigmoid. Treat scores as a ranking: do not compare them across models, and do not expect a fixed relevance threshold to carry between models (jina-tiny scored the relevant Berlin passage 0.93 and an unrelated one 0.28; MiniLM-MS-MARCO is far more extreme, near 1 and near 0).
 - **Models.** Default `jinaai/jina-reranker-v1-tiny-en` (Apache-2.0, 4 layers, about 35 MB at q8: 33.4 MB model plus 2.0 MB tokenizer). It loads in Transformers.js with the standard `AutoModelForSequenceClassification`; it does not need remote code, because Transformers.js reads the plain BERT config and ignores the `auto_map` entries. The fallback is `Xenova/ms-marco-MiniLM-L-6-v2` (Apache-2.0, about 24.5 MB at q8: 23.1 MB plus 0.7 MB tokenizer). Both are English only.
 - **`dtype`** defaults to `q8` (the small download); other dtypes fetch other, larger files. A non-default dtype is appended to `getModelId()`.
-- **Length.** Each query + passage pair is truncated to `maxLength` tokens (default and ceiling 512: both tokenizers report `model_max_length` 512, and passing a larger value scored identically, so the jina model's 8192-token position range is not reachable through Transformers.js). Longer passages are cut silently, never an error.
+- **Length.** Each query + passage pair is truncated to `maxLength` tokens; longer text is cut silently, never an error. The limit is per model (`getRerankerProfile`, like the embedding profile table). **jina-reranker-v1-tiny-en** uses ALiBi positions, so its real limit is 8192 even though its tokenizer says 512: this package raises the tokenizer limit for it, defaults `maxLength` to **1024** (a few paragraphs, sensible for memory bodies) and lets `maxLength` / `--max-length` go up to 8192. Verified: scores for inputs under 512 tokens are unchanged, and a relevant sentence at token ~900 is found at 1024 (top rank) but invisible at 512. **ms-marco-MiniLM** has learned absolute positions: its ONNX graph fails above 512 tokens, so it stays at 512 and a larger `maxLength` is capped by the tokenizer. Cost grows with length: 25 passages of about 900 tokens took a median of 2.4 s at 1024 against 1.5 s at 512 (the 512 run cuts the passages), while 25 passages of 100 to 300 tokens cost the same either way (about 0.4 s, within noise: 459 / 395 / 397 ms at 1024 and 358 / 459 / 427 ms at 512 over three runs).
 - **Batching.** Pairs are scored in padded chunks of 8, sorted by length like `embedBatch`; results come back in input order. An empty list returns `[]` without loading the model; an empty passage is scored like any other text.
 - **Latency** (16-core CPU, q8, 25 passages of roughly 100 to 300 tokens, median of 5 runs after loading; four separate smoke runs): jina-tiny 412, 306, 280 and 311 ms, MiniLM 298, 370, 320 and 310 ms, so about 0.3 to 0.4 s either way on this machine (the first call of a run is slower, e.g. 482 to 533 ms). Model load from a warm cache took about 0.2 to 0.4 s. Reproduce with `SMOKE_MODEL=1 npx vitest run tests/reranker-smoke.test.ts --disableConsoleIntercept`, which also checks that an obviously relevant passage outranks distractors for both models.
 
@@ -283,22 +297,25 @@ npx nachos-embeddings embed --stdin --json < texts.txt   # one text per line in,
 npx nachos-embeddings serve                              # persistent JSON-lines server
 npx nachos-embeddings info [--json]                      # provider, model, dimension, cache dir
 npx nachos-embeddings rerank --query <q> --stdin --json  # one passage per line in, one JSON array of scores out
+npx nachos-embeddings pull <model> [--dtype q8]          # pre-download a model for offline use
 ```
 
-| Flag                                          | Applies to   | Description                                                                          |
-| --------------------------------------------- | ------------ | ------------------------------------------------------------------------------------ |
-| `--stdin`, `--json`                           | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output. |
-| `--provider <name>`                           | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.               |
-| `--model <id>`                                | all          | Transformers model name, or Bedrock model id.                                        |
-| `--region <region>`                           | bedrock      | AWS region (default `us-east-1`).                                                    |
-| `--cache-dir <dir>`                           | transformers | Model cache directory (default: per-user, see above).                                |
-| `--dtype <type>`                              | transformers | Precision, e.g. `q8`. Appended to the reported model id.                             |
-| `--type <t>`                                  | `embed`      | `query` or `document` (default). Selects the model's prefix. In `serve`, see below.  |
-| `--pooling <mode>`                            | transformers | `mean` or `cls`. Default per model.                                                  |
-| `--query-prefix <s>`, `--document-prefix <s>` | transformers | Override the model's prefixes (`""` disables).                                       |
-| `--max-length <n>`                            | transformers | Truncate to `n` tokens (can only lower the tokenizer limit).                         |
-| `--query <q>`                                 | `rerank`     | The query; also needs `--stdin --json`. Uses `--model`, `--dtype`, `--cache-dir`.    |
-| `--rerank-model <id>`, `--rerank-dtype <t>`   | `serve`      | Enable `op: "rerank"` (see Reranking). Also accepted by `rerank`.                    |
+| Flag                                          | Applies to   | Description                                                                               |
+| --------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------- |
+| `--stdin`, `--json`                           | `embed`      | Both required. Output order matches input order. Empty input exits 0 with no output.      |
+| `--provider <name>`                           | all          | `transformers` (default) or `bedrock`. Anything else is a usage error.                    |
+| `--model <id>`                                | all          | Transformers model name, or Bedrock model id.                                             |
+| `--region <region>`                           | bedrock      | AWS region (default `us-east-1`).                                                         |
+| `--cache-dir <dir>`                           | transformers | Model cache directory (default: per-user, see above).                                     |
+| `--dtype <type>`                              | transformers | Precision, e.g. `q8`. Appended to the reported model id.                                  |
+| `--type <t>`                                  | `embed`      | `query` or `document` (default). Selects the model's prefix. In `serve`, see below.       |
+| `--pooling <mode>`                            | transformers | `mean` or `cls`. Default per model.                                                       |
+| `--query-prefix <s>`, `--document-prefix <s>` | transformers | Override the model's prefixes (`""` disables).                                            |
+| `--max-length <n>`                            | transformers | Truncate to `n` tokens (can only lower the tokenizer limit).                              |
+| `--query <q>`                                 | `rerank`     | The query; also needs `--stdin --json`. Uses `--model`, `--dtype`, `--cache-dir`.         |
+| `--rerank-model <id>`, `--rerank-dtype <t>`   | `serve`      | Enable `op: "rerank"` (see Reranking). Also accepted by `rerank`.                         |
+| `--offline`                                   | transformers | Never use the network; fail if a model is not cached. Env: `NACHOS_EMBEDDINGS_OFFLINE=1`. |
+| `<model>`, `--kind embedding\|rerank`         | `pull`       | Download a model into the cache (see Privacy and offline use).                            |
 
 **`serve`** loads the provider once, then handles one request per stdin line, sequentially and in order. First stdout line:
 

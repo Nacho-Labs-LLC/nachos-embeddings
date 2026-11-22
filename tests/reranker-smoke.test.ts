@@ -39,8 +39,44 @@ function benchmarkPassages(): string[] {
   });
 }
 
+/** 25 passages of roughly 900 tokens; the relevant sentence is the last one. */
+function longPassages(): string[] {
+  return Array.from({ length: 25 }, (_, i) => {
+    const text = filler.repeat(18 + (i % 4)).trim();
+    return i === 12 ? `${text} ${relevant}` : text;
+  });
+}
+
 const median = (xs: number[]) =>
   [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] as number;
+
+describe.skipIf(!enabled)("reranker long inputs (real models)", () => {
+  it("jina: the raised limit (default 1024) sees a sentence after token 512", async () => {
+    const r = new Reranker({ cacheDir });
+    const scores = await r.rerank(query, longPassages());
+    expect(scores.indexOf(Math.max(...scores))).toBe(12);
+    await r.dispose();
+    const capped = new Reranker({ maxLength: 512, cacheDir });
+    const cut = await capped.rerank(query, longPassages());
+    // Truncated at 512 tokens the relevant sentence is invisible.
+    expect(cut[12]).toBeLessThanOrEqual(
+      Math.max(...cut.filter((_, i) => i !== 12)) + 1e-6,
+    );
+    await capped.dispose();
+  }, 600_000);
+
+  it("MiniLM: a larger maxLength is capped at 512 instead of failing", async () => {
+    const r = new Reranker({
+      model: RERANK_FALLBACK_MODEL,
+      maxLength: 2048,
+      cacheDir,
+    });
+    expect(r.getConfig().maxLength).toBe(2048);
+    const scores = await r.rerank(query, longPassages().slice(0, 3));
+    expect(scores).toHaveLength(3);
+    await r.dispose();
+  }, 600_000);
+});
 
 describe.skipIf(!enabled)("reranker smoke (real models)", () => {
   const reranker: Reranker[] = [];

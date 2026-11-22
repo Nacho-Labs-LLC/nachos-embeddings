@@ -8,22 +8,36 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const calls = vi.hoisted(() => ({
   tokenizer: [] as { texts: string[]; options: Record<string, unknown> }[],
   loads: [] as { id: string; options: Record<string, unknown> }[],
+  tokenizers: [] as { _tokenizerConfig: { model_max_length: number } }[],
   disposed: 0,
 }));
 
 vi.mock("@huggingface/transformers", () => {
-  const fakeTokenizer = (texts: string[], options: Record<string, unknown>) => {
-    calls.tokenizer.push({ texts, options });
-    return {
-      pairs: texts.map((q, i) => [q, (options["text_pair"] as string[])[i]]),
-    };
-  };
+  const makeTokenizer = () =>
+    Object.assign(
+      (texts: string[], options: Record<string, unknown>) => {
+        calls.tokenizer.push({ texts, options });
+        return {
+          pairs: texts.map((q, i) => [
+            q,
+            (options["text_pair"] as string[])[i],
+          ]),
+        };
+      },
+      { _tokenizerConfig: { model_max_length: 512 } },
+    );
   return {
-    env: { allowLocalModels: true },
+    env: {
+      allowLocalModels: true,
+      allowRemoteModels: true,
+      localModelPath: "./models/",
+    },
     AutoTokenizer: {
       from_pretrained: (id: string, options: Record<string, unknown>) => {
         calls.loads.push({ id, options });
-        return Promise.resolve(fakeTokenizer);
+        const tokenizer = makeTokenizer();
+        calls.tokenizers.push(tokenizer);
+        return Promise.resolve(tokenizer);
       },
     },
     AutoModelForSequenceClassification: {
@@ -69,6 +83,7 @@ beforeEach(async () => {
   await disposeRerankers();
   calls.tokenizer.length = 0;
   calls.loads.length = 0;
+  calls.tokenizers.length = 0;
   calls.disposed = 0;
 });
 
@@ -116,7 +131,43 @@ describe("Reranker", () => {
     });
     calls.tokenizer.length = 0;
     await new Reranker().rerank("q", ["a"]);
-    expect(calls.tokenizer[0]?.options["max_length"]).toBe(512);
+    expect(calls.tokenizer[0]?.options["max_length"]).toBe(1024);
+  });
+
+  it("raises the tokenizer limit for models whose profile allows it (jina), default 1024", async () => {
+    const reranker = new Reranker({ cacheDir: "/tmp/x" });
+    expect(reranker.getConfig().maxLength).toBe(1024);
+    await reranker.init();
+    expect(calls.tokenizers[0]?._tokenizerConfig.model_max_length).toBe(1024);
+
+    const long = new Reranker({ maxLength: 4096, cacheDir: "/tmp/x" });
+    await long.init();
+    expect(long.getConfig().maxLength).toBe(4096);
+    expect(calls.tokenizers[1]?._tokenizerConfig.model_max_length).toBe(4096);
+    expect(new Reranker({ maxLength: 99999 }).getConfig().maxLength).toBe(8192);
+  });
+
+  it("keeps 512 for models without a profile (MiniLM): the limit is never raised", async () => {
+    const reranker = new Reranker({
+      model: RERANK_FALLBACK_MODEL,
+      maxLength: 2048,
+      cacheDir: "/tmp/x",
+    });
+    expect(
+      new Reranker({ model: RERANK_FALLBACK_MODEL }).getConfig().maxLength,
+    ).toBe(512);
+    await reranker.init();
+    // The tokenizer config is untouched, so Transformers.js still caps at 512.
+    expect(calls.tokenizers[0]?._tokenizerConfig.model_max_length).toBe(512);
+  });
+
+  it("resolves offline from the option or NACHOS_EMBEDDINGS_OFFLINE", () => {
+    expect(new Reranker().getConfig().offline).toBe(false);
+    expect(new Reranker({ offline: true }).getConfig().offline).toBe(true);
+    vi.stubEnv("NACHOS_EMBEDDINGS_OFFLINE", "1");
+    expect(new Reranker().getConfig().offline).toBe(true);
+    expect(new Reranker({ offline: false }).getConfig().offline).toBe(false);
+    vi.unstubAllEnvs();
   });
 
   it("handles an empty list without loading the model", async () => {

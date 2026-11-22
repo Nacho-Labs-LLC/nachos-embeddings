@@ -62,12 +62,24 @@
  *                        "rerank":{"model":"<id>"}. Without them no reranker
  *                        is downloaded or loaded.
  *
+ *   --offline            never touch the network: load models from the cache only
+ *                        and fail clearly if one is missing (also enabled by
+ *                        NACHOS_EMBEDDINGS_OFFLINE=1). Without it, a fully
+ *                        cached model still loads with no network request; a
+ *                        download happens only when files are missing.
+ *   pull <model>         subcommand: download a model into the cache and print
+ *                        {"pulled":true,"kind","model","cacheDir"}. Uses
+ *                        --dtype/--cache-dir; --kind embedding|rerank overrides
+ *                        the guess (rerank when the id names a reranker).
+ *                        Refuses to run in offline mode.
+ *
  * Exit codes: 0 ok, 1 usage error, 2 embedding failure.
  * All diagnostics go to stderr so stdout stays pure JSONL.
  */
 
 import { createInterface } from "node:readline";
 import { Embedder } from "../dist/embedder.js";
+import { OFFLINE_ENV_VAR, isOfflineEnv } from "../dist/offline.js";
 
 const PROVIDERS = ["transformers", "bedrock"];
 
@@ -85,6 +97,7 @@ const VALUE_OPTIONS = {
   "--query": "query",
   "--rerank-model": "rerankModel",
   "--rerank-dtype": "rerankDtype",
+  "--kind": "kind",
 };
 
 const INPUT_TYPES = ["query", "document"];
@@ -107,6 +120,8 @@ function parseArgs(argv) {
     query: undefined,
     rerankModel: undefined,
     rerankDtype: undefined,
+    kind: undefined,
+    offline: false,
     stdin: false,
     json: false,
   };
@@ -126,6 +141,11 @@ function parseArgs(argv) {
   if (args.pooling !== undefined && !["mean", "cls"].includes(args.pooling)) {
     throw new UsageError(
       `unknown pooling '${args.pooling}' (expected mean|cls)`,
+    );
+  }
+  if (args.kind !== undefined && !["embedding", "rerank"].includes(args.kind)) {
+    throw new UsageError(
+      `unknown kind '${args.kind}' (expected embedding|rerank)`,
     );
   }
   if (args.maxLength !== undefined) {
@@ -159,7 +179,7 @@ function addPositionalArgument(args, argument) {
 
 function setBooleanFlag(args, argument) {
   const flag = argument?.slice(2);
-  if (flag !== "stdin" && flag !== "json") return false;
+  if (flag !== "stdin" && flag !== "json" && flag !== "offline") return false;
   args[flag] = true;
   return true;
 }
@@ -182,8 +202,14 @@ async function makeProvider(args) {
   return activeProvider;
 }
 
-async function makeBedrockProvider({ model, region }) {
+async function makeBedrockProvider(args) {
+  const { model, region } = args;
   // Lazy import so the local (transformers) path needs no AWS SDK.
+  if (isOffline(args)) {
+    throw new Error(
+      `bedrock is a network service and cannot be used in offline mode (--offline or ${OFFLINE_ENV_VAR}=1)`,
+    );
+  }
   const { BedrockProvider } =
     await import("../dist/providers/bedrock/index.js");
   const provider = new BedrockProvider({
@@ -205,6 +231,7 @@ async function makeTransformersProvider(args) {
     ...(queryPrefix !== undefined && { queryPrefix }),
     ...(documentPrefix !== undefined && { documentPrefix }),
     ...(args.maxLength !== undefined && { maxLength: args.maxLength }),
+    ...(args.offline && { offline: true }),
   });
   await provider.init();
   return provider;
@@ -213,12 +240,14 @@ async function makeTransformersProvider(args) {
 const USAGE =
   "usage: nachos-embeddings embed --stdin --json [options]\n" +
   "       nachos-embeddings rerank --query <q> --stdin --json [options]\n" +
+  "       nachos-embeddings pull <model> [--dtype <type>] [--kind embedding|rerank]\n" +
   "       nachos-embeddings serve [options]\n" +
   "       nachos-embeddings info [--json] [options]\n" +
   "options: [--provider transformers|bedrock] [--model <id>] [--region <r>]\n" +
   "         [--cache-dir <dir>] [--dtype <fp32|fp16|q8|q4|...>]\n" +
   "         [--type query|document] [--pooling mean|cls] [--max-length <tokens>]\n" +
   "         [--query-prefix <text>] [--document-prefix <text>]\n" +
+  "         [--offline]   never use the network (also NACHOS_EMBEDDINGS_OFFLINE=1)\n" +
   "serve:   [--rerank-model <id>] [--rerank-dtype <type>] enable op=rerank\n";
 
 function parseLines(raw) {
@@ -321,6 +350,11 @@ function embeddingSettings(provider) {
   return settings;
 }
 
+// --offline, or NACHOS_EMBEDDINGS_OFFLINE=1 in the environment.
+function isOffline(args) {
+  return args.offline || isOfflineEnv();
+}
+
 function modelId(provider) {
   return provider.getModelId?.() ?? provider.name;
 }
@@ -357,6 +391,7 @@ async function makeReranker(args, { model, dtype }) {
     ...(dtype && { dtype }),
     ...(args.cacheDir && { cacheDir: args.cacheDir }),
     ...(args.maxLength !== undefined && { maxLength: args.maxLength }),
+    ...(args.offline && { offline: true }),
   });
   await reranker.init();
   activeReranker = reranker;
@@ -381,6 +416,7 @@ async function runServe(args) {
     dimension: await provider.getDimension(),
     ...embeddingSettings(provider),
     ...(reranker && { rerank: { model: reranker.getModelId() } }),
+    ...(isOffline(args) && { offline: true }),
   });
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   // Sequential: one in-flight request at a time keeps replies in order.
@@ -434,6 +470,7 @@ async function main() {
   if (args._[0] === "serve") return runServe(args);
   if (args._[0] === "info") return runInfo(args);
   if (args._[0] === "rerank") return runRerank(args);
+  if (args._[0] === "pull") return runPull(args);
   if (!isEmbedCommand(args)) return usageError();
 
   await runEmbedding(args);
@@ -457,6 +494,46 @@ async function runRerank(args) {
     .catch((e) => fail("rerank failed", e));
   writeJson(scores);
   await disposeProvider(reranker);
+}
+
+// Download a model into the cache so later runs (or air-gapped machines that
+// copy the cache directory) need no network. This is the one command that
+// reaches the network on purpose, so it refuses to run in offline mode.
+async function runPull(args) {
+  const model = args._[1];
+  if (!model) return usageError("pull requires a model id");
+  if (isOffline(args)) {
+    return fail(
+      "pull failed",
+      new Error(
+        `pull needs network access but offline mode is on (--offline or ${OFFLINE_ENV_VAR}=1); unset it to download`,
+      ),
+    );
+  }
+  const { looksLikeReranker } =
+    await import("../dist/providers/reranker-profiles.js");
+  const kind = args.kind ?? (looksLikeReranker(model) ? "rerank" : "embedding");
+  const options = {
+    model,
+    ...(args.dtype && { dtype: args.dtype }),
+    ...(args.cacheDir && { cacheDir: args.cacheDir }),
+  };
+  let loaded;
+  if (kind === "rerank") {
+    loaded = await makeReranker(args, { model, dtype: args.dtype }).catch((e) =>
+      fail("pull failed", e),
+    );
+  } else {
+    loaded = new Embedder(options);
+    await loaded.init().catch((e) => fail("pull failed", e));
+  }
+  writeJson({
+    pulled: true,
+    kind,
+    model: loaded.getModelId(),
+    cacheDir: loaded.getConfig().cacheDir,
+  });
+  await disposeProvider(loaded);
 }
 
 function isEmbedCommand(args) {

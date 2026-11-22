@@ -18,9 +18,11 @@ import {
 import {
   TRANSFORMERS_DTYPES,
   resolveDefaultCacheDir,
-  withRemoteModelsOnly,
   type TransformersDtype,
 } from "./providers/transformers-provider.js";
+import { loadModel } from "./providers/model-loading.js";
+import { getRerankerProfile } from "./providers/reranker-profiles.js";
+import { isOfflineEnv } from "./offline.js";
 
 /** Default reranker: 4-layer Jina cross-encoder, ~35 MB download at q8. */
 export const RERANK_DEFAULT_MODEL = "jinaai/jina-reranker-v1-tiny-en";
@@ -31,7 +33,10 @@ export const RERANK_FALLBACK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2";
 /** Default precision. The quantized weights are the small download. */
 export const RERANK_DEFAULT_DTYPE: TransformersDtype = "q8";
 
-/** Default truncation length in tokens (query + passage together). */
+/**
+ * Default truncation length in tokens (query + passage together) for models
+ * without a profile. The default model uses 1024; see `reranker-profiles.ts`.
+ */
 export const RERANK_DEFAULT_MAX_LENGTH = 512;
 
 /** Pairs per padded model call. */
@@ -44,14 +49,23 @@ export interface RerankOptions {
   dtype?: TransformersDtype;
   /**
    * Truncate each query + passage pair to this many tokens. Longer passages
-   * are cut, never an error. Like the embedding `maxLength` it can only lower
-   * the tokenizer's own limit (512 for both supported models, measured: a
-   * larger value scored identically).
-   * @default RERANK_DEFAULT_MAX_LENGTH (512)
+   * are cut, never an error. Default per model: 1024 for the jina default
+   * (ALiBi, so the tokenizer's 512 limit is raised, up to 8192), 512 for
+   * models without a profile such as MiniLM. A larger value is silently
+   * capped: at 8192 for jina, at the tokenizer's limit (512 for MiniLM, whose
+   * graph fails above that) otherwise.
    */
   maxLength?: number;
   /** @default resolveDefaultCacheDir() (see TransformersProviderConfig) */
   cacheDir?: string;
+  /**
+   * Never touch the network: load only from the cache and fail with
+   * `ModelNotCachedError` if the model is not there. Default: true when
+   * `NACHOS_EMBEDDINGS_OFFLINE=1`, else false (a fully cached model still
+   * loads without network access; it is downloaded only when files are
+   * missing).
+   */
+  offline?: boolean;
 }
 
 export type ResolvedRerankOptions = Required<RerankOptions>;
@@ -74,6 +88,27 @@ function validate(options: RerankOptions): void {
       `Invalid maxLength '${String(maxLength)}'. Expected a positive integer`,
     );
   }
+}
+
+/**
+ * Transformers.js clamps `max_length` to the tokenizer's `model_max_length`
+ * (512 for the jina reranker, whose ALiBi positions support 8192). There is
+ * no public option to lift it, so raise it on the tokenizer's config, only
+ * for models whose profile says the model supports longer inputs.
+ */
+function raiseTokenizerLimit(
+  tokenizer: PreTrainedTokenizer,
+  maxLength: number,
+): void {
+  const config = (
+    tokenizer as unknown as { _tokenizerConfig?: Record<string, unknown> }
+  )._tokenizerConfig;
+  if (config === undefined) {
+    throw new Error(
+      "Cannot raise the tokenizer length limit: this @huggingface/transformers version changed its tokenizer internals. Pass maxLength <= 512.",
+    );
+  }
+  config["model_max_length"] = maxLength;
 }
 
 /** Logistic function; stable for large magnitudes (exp overflow gives 0 or 1). */
@@ -106,15 +141,25 @@ export class Reranker {
   private readonly config: ResolvedRerankOptions;
   private loaded: Loaded | null = null;
   private initPromise: Promise<void> | null = null;
+  private readonly raisesTokenizerLimit: boolean;
 
   constructor(options: RerankOptions = {}) {
     validate(options);
+    const model = options.model ?? RERANK_DEFAULT_MODEL;
+    const profile = getRerankerProfile(model);
     this.config = {
-      model: options.model ?? RERANK_DEFAULT_MODEL,
+      model,
       dtype: options.dtype ?? RERANK_DEFAULT_DTYPE,
-      maxLength: options.maxLength ?? RERANK_DEFAULT_MAX_LENGTH,
+      // Capped at what the model supports; without a profile the tokenizer's
+      // own limit applies when the tokenizer is called.
+      maxLength: Math.min(
+        options.maxLength ?? profile.maxLength,
+        profile.maxPositions ?? Infinity,
+      ),
       cacheDir: options.cacheDir ?? resolveDefaultCacheDir(),
+      offline: options.offline ?? isOfflineEnv(),
     };
+    this.raisesTokenizerLimit = profile.maxPositions !== undefined;
   }
 
   /** Loads the model (downloading it on first use). Safe to call repeatedly. */
@@ -127,16 +172,23 @@ export class Reranker {
   }
 
   private async load(): Promise<void> {
-    const { model, dtype, cacheDir } = this.config;
-    const loaded = await withRemoteModelsOnly(async () => ({
-      tokenizer: await AutoTokenizer.from_pretrained(model, {
-        cache_dir: cacheDir,
+    const { model, dtype, cacheDir, offline, maxLength } = this.config;
+    const loaded = await loadModel(
+      { model, cacheDir, dtype, offline },
+      async (extra) => ({
+        tokenizer: await AutoTokenizer.from_pretrained(model, {
+          cache_dir: cacheDir,
+          ...extra,
+        }),
+        model: await AutoModelForSequenceClassification.from_pretrained(model, {
+          cache_dir: cacheDir,
+          dtype,
+          ...extra,
+        }),
       }),
-      model: await AutoModelForSequenceClassification.from_pretrained(model, {
-        cache_dir: cacheDir,
-        dtype,
-      }),
-    }));
+    );
+    if (this.raisesTokenizerLimit)
+      raiseTokenizerLimit(loaded.tokenizer, maxLength);
     this.loaded = loaded;
   }
 
@@ -229,12 +281,8 @@ export function rerank(
   options: RerankOptions = {},
 ): Promise<number[]> {
   validate(options);
-  const probe = {
-    model: options.model ?? RERANK_DEFAULT_MODEL,
-    dtype: options.dtype ?? RERANK_DEFAULT_DTYPE,
-    maxLength: options.maxLength ?? RERANK_DEFAULT_MAX_LENGTH,
-    cacheDir: options.cacheDir ?? resolveDefaultCacheDir(),
-  };
+  // Resolve through a Reranker so the cache key holds the effective config.
+  const probe = new Reranker(options).getConfig();
   const key = JSON.stringify(probe);
   let reranker = shared.get(key);
   if (!reranker) {
