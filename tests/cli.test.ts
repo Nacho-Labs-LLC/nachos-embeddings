@@ -58,11 +58,28 @@ function createLoader() {
       async embedBatch(lines) { return lines.map((_, index) => [index + 0.5]); }
     }
   `;
+  const reranker = `${common}
+    export class Reranker {
+      constructor(options) { this.options = options; log({ reranker: { options } }); }
+      async init() { log({ rerankerInit: true }); }
+      getModelId() {
+        const { model = "stub-rerank-default", dtype } = this.options;
+        return dtype ? model + ":" + dtype : model;
+      }
+      async rerank(query, passages) {
+        log({ rerank: { query, passages } });
+        if (query === "boom") throw new Error("rerank exploded");
+        return passages.map((p) => p.length / 10);
+      }
+      async dispose() { log({ disposed: "reranker" }); }
+    }
+  `;
   writeFileSync(
     loader,
     `export async function resolve(specifier, context, nextResolve) {
       const modules = {
         "../dist/embedder.js": ${JSON.stringify(`data:text/javascript,${encodeURIComponent(transformers)}`)},
+        "../dist/reranker.js": ${JSON.stringify(`data:text/javascript,${encodeURIComponent(reranker)}`)},
         "../dist/providers/bedrock/index.js": ${JSON.stringify(`data:text/javascript,${encodeURIComponent(bedrock)}`)},
       };
       if (modules[specifier]) return { url: modules[specifier], shortCircuit: true };
@@ -110,7 +127,9 @@ function runCli(args: string[], input = "") {
   const providers = events.filter((event) => event.provider);
   const disposed = events.flatMap((event) => event.disposed ?? []);
   const batches = events.flatMap((event) => event.embedBatch ?? []);
-  return { ...result, providers, disposed, batches };
+  const rerankers = events.flatMap((event) => event.reranker ?? []);
+  const reranks = events.flatMap((event) => event.rerank ?? []);
+  return { ...result, providers, disposed, batches, rerankers, reranks };
 }
 
 afterEach(() => {
@@ -423,5 +442,143 @@ describe("nachos-embeddings CLI", () => {
     expect(readEvents(log).flatMap((event) => event.disposed ?? [])).toEqual([
       "transformers",
     ]);
+  });
+
+  describe("rerank", () => {
+    const serveLines = (stdout: string) =>
+      stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+
+    it("one-shot rerank prints one JSON array of scores in input order", () => {
+      const result = runCli(
+        [
+          "rerank",
+          "--query",
+          "q",
+          "--stdin",
+          "--json",
+          "--model",
+          "m",
+          "--dtype",
+          "q4",
+        ],
+        "aa\n\nbbbbb\n",
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("[0.2,0,0.5]\n");
+      expect(result.rerankers).toEqual([
+        { options: { model: "m", dtype: "q4" } },
+      ]);
+      expect(result.reranks).toEqual([
+        { query: "q", passages: ["aa", "", "bbbbb"] },
+      ]);
+      expect(result.providers).toEqual([]);
+      expect(result.disposed).toEqual(["reranker"]);
+    });
+
+    it("--rerank-model/--rerank-dtype take precedence; empty stdin gives []", () => {
+      const result = runCli(
+        [
+          "rerank",
+          "--query",
+          "q",
+          "--stdin",
+          "--json",
+          "--model",
+          "m",
+          "--rerank-model",
+          "r",
+        ],
+        "x\n",
+      );
+      expect(result.rerankers).toEqual([{ options: { model: "r" } }]);
+      const empty = runCli(["rerank", "--query", "q", "--stdin", "--json"], "");
+      expect(empty.stdout).toBe("[]\n");
+      expect(empty.rerankers).toEqual([]);
+    });
+
+    it("one-shot rerank needs --query, --stdin and --json; failures exit 2", () => {
+      const missing = runCli(["rerank", "--stdin", "--json"], "x\n");
+      expect(missing.status).toBe(1);
+      expect(missing.stdout).toBe("");
+      const failed = runCli(
+        ["rerank", "--query", "boom", "--stdin", "--json"],
+        "x\n",
+      );
+      expect(failed.status).toBe(2);
+      expect(failed.stdout).toBe("");
+      expect(failed.stderr).toContain("rerank exploded");
+    });
+
+    it("serve without rerank flags never constructs a reranker", () => {
+      const result = runCli(
+        ["serve", "--model", "custom-model"],
+        JSON.stringify({ id: 1, texts: ["a"] }) +
+          "\n" +
+          JSON.stringify({ id: 2, op: "rerank", query: "q", passages: ["a"] }) +
+          "\n",
+      );
+      const out = serveLines(result.stdout);
+      expect(out[0]).toEqual({
+        ready: true,
+        model: "custom-model",
+        dimension: 1,
+      });
+      expect(out[1]).toEqual({ id: 1, vectors: [[0.25]] });
+      expect(out[2].id).toBe(2);
+      expect(out[2].error).toContain("rerank is not enabled");
+      expect(result.rerankers).toEqual([]);
+    });
+
+    it("serve --rerank-model announces support and answers op=rerank", () => {
+      const input = [
+        { id: 1, texts: ["a"] },
+        { id: 2, op: "rerank", query: "q", passages: ["aaaa", "b", ""] },
+        { id: 3, op: "rerank", query: "q", passages: [] },
+        { id: 4, op: "rerank", query: "q" },
+        { id: 5, op: "rerank", query: "q", passages: [1] },
+        { id: 6, op: "nope" },
+        { id: 7, op: "rerank", query: "boom", passages: ["a"] },
+        { id: 8, op: "embed", texts: ["a", "b"] },
+      ]
+        .map((r) => JSON.stringify(r))
+        .join("\n");
+      const result = runCli(
+        ["serve", "--rerank-model", "r", "--rerank-dtype", "q8"],
+        input + "\n",
+      );
+      expect(result.status).toBe(0);
+      const out = serveLines(result.stdout);
+      expect(out[0]).toEqual({
+        ready: true,
+        model: "stub-default",
+        dimension: 1,
+        rerank: { model: "r:q8" },
+      });
+      expect(out[1]).toEqual({ id: 1, vectors: [[0.25]] });
+      expect(out[2]).toEqual({ id: 2, scores: [0.4, 0.1, 0] });
+      expect(out[3]).toEqual({ id: 3, scores: [] });
+      expect(out[4].error).toContain("invalid request");
+      expect(out[5].error).toContain("invalid request");
+      expect(out[6]).toEqual({
+        id: 6,
+        error: "invalid request: unknown op 'nope'",
+      });
+      expect(out[7]).toEqual({ id: 7, error: "rerank exploded" });
+      expect(out[8]).toEqual({ id: 8, vectors: [[0.25], [1.25]] });
+      expect(result.rerankers).toEqual([
+        { options: { model: "r", dtype: "q8" } },
+      ]);
+      expect(result.disposed.sort()).toEqual(["reranker", "transformers"]);
+    });
+
+    it("serve --rerank-dtype alone enables the default reranker model", () => {
+      const result = runCli(["serve", "--rerank-dtype", "fp32"], "");
+      expect(serveLines(result.stdout)[0].rerank).toEqual({
+        model: "stub-rerank-default:fp32",
+      });
+    });
   });
 });

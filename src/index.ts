@@ -78,3 +78,16 @@ export {
   type ResolvedTransformersConfig,
   type CacheDirEnvironment,
 } from "./providers/transformers-provider.js";
+
+// Cross-encoder reranker
+export {
+  Reranker,
+  rerank,
+  disposeRerankers,
+  RERANK_DEFAULT_MODEL,
+  RERANK_FALLBACK_MODEL,
+  RERANK_DEFAULT_DTYPE,
+  RERANK_DEFAULT_MAX_LENGTH,
+  type RerankOptions,
+  type ResolvedRerankOptions,
+} from "./reranker.js";

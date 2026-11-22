@@ -234,6 +234,46 @@ The default `Xenova/all-MiniLM-L6-v2` is a fine general starter. For retrieval, 
 npx nachos-embeddings serve --model BAAI/bge-small-en-v1.5
 ```
 
+## Reranking
+
+A cross-encoder reads the query and one passage together and scores how well the passage answers it. It is more accurate than comparing embeddings but too slow to run over a whole corpus, so use it to re-score the top ~25 candidates of a first-stage search. The reranker is a separate model from the embedding model; a process can hold both, and nothing is downloaded or loaded until you ask for it.
+
+```typescript
+import { rerank } from "@nacho-labs/nachos-embeddings";
+
+const scores = await rerank("how many people live in Berlin?", [
+  "New York City is famous for the Metropolitan Museum of Art.",
+  "Berlin has a population of 3,520,031 registered inhabitants.",
+]);
+// scores[i] belongs to passages[i]; higher is more relevant
+```
+
+`rerank(query, passages, { model, dtype, maxLength, cacheDir })` returns one score per passage in input order. It loads the model lazily on first use and caches it per option set; `disposeRerankers()` releases them. For explicit control use `new Reranker(options)` with `init()`, `rerank()`, `getModelId()` and `dispose()`.
+
+- **Scores** are `sigmoid(logit)`, so they lie in (0, 1) and higher is more relevant. Both supported models are single-logit cross-encoders trained with a sigmoid head, and their reference implementations apply the same sigmoid. Treat scores as a ranking: do not compare them across models, and do not expect a fixed relevance threshold to carry between models (jina-tiny scored the relevant Berlin passage 0.93 and an unrelated one 0.28; MiniLM-MS-MARCO is far more extreme, near 1 and near 0).
+- **Models.** Default `jinaai/jina-reranker-v1-tiny-en` (Apache-2.0, 4 layers, about 35 MB at q8: 33.4 MB model plus 2.0 MB tokenizer). It loads in Transformers.js with the standard `AutoModelForSequenceClassification`; it does not need remote code, because Transformers.js reads the plain BERT config and ignores the `auto_map` entries. The fallback is `Xenova/ms-marco-MiniLM-L-6-v2` (Apache-2.0, about 24.5 MB at q8: 23.1 MB plus 0.7 MB tokenizer). Both are English only.
+- **`dtype`** defaults to `q8` (the small download); other dtypes fetch other, larger files. A non-default dtype is appended to `getModelId()`.
+- **Length.** Each query + passage pair is truncated to `maxLength` tokens (default and ceiling 512: both tokenizers report `model_max_length` 512, and passing a larger value scored identically, so the jina model's 8192-token position range is not reachable through Transformers.js). Longer passages are cut silently, never an error.
+- **Batching.** Pairs are scored in padded chunks of 8, sorted by length like `embedBatch`; results come back in input order. An empty list returns `[]` without loading the model; an empty passage is scored like any other text.
+- **Latency** (16-core CPU, q8, 25 passages of roughly 100 to 300 tokens, median of 5 runs after loading; four separate smoke runs): jina-tiny 412, 306, 280 and 311 ms, MiniLM 298, 370, 320 and 310 ms, so about 0.3 to 0.4 s either way on this machine (the first call of a run is slower, e.g. 482 to 533 ms). Model load from a warm cache took about 0.2 to 0.4 s. Reproduce with `SMOKE_MODEL=1 npx vitest run tests/reranker-smoke.test.ts --disableConsoleIntercept`, which also checks that an obviously relevant passage outranks distractors for both models.
+
+From the CLI (output is one JSON array of scores on one line):
+
+```bash
+printf 'Berlin has 3.5 million inhabitants.\nNew York has museums.\n' \
+  | npx nachos-embeddings rerank --query "How many people live in Berlin?" --stdin --json
+# [0.931...,0.28...]
+```
+
+`serve` can answer rerank requests on the same connection as embeddings. Pass `--rerank-model <id>` and/or `--rerank-dtype <type>` (either enables it; the reranker loads before the ready line). The ready line then carries `"rerank": {"model": "<id>"}`, which clients can use to detect support; without the flag the key is absent and no reranker is downloaded or loaded.
+
+```text
+> {"id": 3, "op": "rerank", "query": "capital of France", "passages": ["Paris is in France.", "Cats purr."]}
+< {"id": 3, "scores": [0.97, 0.02]}
+```
+
+Requests without `"op"` behave exactly as before. A rerank request when the reranker is not enabled, an unknown `op`, or a missing/non-string `query` or `passages` gets `{"id", "error"}`.
+
 ## CLI
 
 For callers that are not JavaScript. All diagnostics go to stderr; stdout carries only data.
@@ -242,6 +282,7 @@ For callers that are not JavaScript. All diagnostics go to stderr; stdout carrie
 npx nachos-embeddings embed --stdin --json < texts.txt   # one text per line in, one JSON vector per line out
 npx nachos-embeddings serve                              # persistent JSON-lines server
 npx nachos-embeddings info [--json]                      # provider, model, dimension, cache dir
+npx nachos-embeddings rerank --query <q> --stdin --json  # one passage per line in, one JSON array of scores out
 ```
 
 | Flag                                          | Applies to   | Description                                                                          |
@@ -256,6 +297,8 @@ npx nachos-embeddings info [--json]                      # provider, model, dime
 | `--pooling <mode>`                            | transformers | `mean` or `cls`. Default per model.                                                  |
 | `--query-prefix <s>`, `--document-prefix <s>` | transformers | Override the model's prefixes (`""` disables).                                       |
 | `--max-length <n>`                            | transformers | Truncate to `n` tokens (can only lower the tokenizer limit).                         |
+| `--query <q>`                                 | `rerank`     | The query; also needs `--stdin --json`. Uses `--model`, `--dtype`, `--cache-dir`.    |
+| `--rerank-model <id>`, `--rerank-dtype <t>`   | `serve`      | Enable `op: "rerank"` (see Reranking). Also accepted by `rerank`.                    |
 
 **`serve`** loads the provider once, then handles one request per stdin line, sequentially and in order. First stdout line:
 

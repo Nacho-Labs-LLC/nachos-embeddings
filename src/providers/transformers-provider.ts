@@ -131,7 +131,9 @@ const BATCH_SIZE = 8;
  */
 let loadLock: Promise<void> = Promise.resolve();
 
-async function withRemoteModelsOnly<T>(fn: () => Promise<T>): Promise<T> {
+export async function withRemoteModelsOnly<T>(
+  fn: () => Promise<T>,
+): Promise<T> {
   const previous = loadLock;
   let release!: () => void;
   loadLock = new Promise<void>((resolve) => {

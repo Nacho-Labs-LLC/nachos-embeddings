@@ -3,7 +3,7 @@
  * Smoke test of the packed npm tarball.
  *
  * Packs the package, extracts it, checks the file list and the executable
- * bit, then runs the extracted CLI. Model-backed checks (info, embed, serve)
+ * bit, then runs the extracted CLI. Model-backed checks (info, embed, serve, rerank)
  * only run when SMOKE_MODEL=1; point NACHOS_EMBEDDINGS_CACHE at a persistent
  * directory to reuse a downloaded model.
  *
@@ -172,6 +172,34 @@ function checkServe(cli, env, dimension) {
   });
 }
 
+function checkRerank(cli, env) {
+  const passages = [
+    "New York City is famous for the Metropolitan Museum of Art.",
+    "Berlin has a population of 3,520,031 registered inhabitants.",
+    "",
+  ];
+  const result = run(
+    process.execPath,
+    [
+      cli,
+      "rerank",
+      "--query",
+      "How many people live in Berlin?",
+      "--stdin",
+    ].concat("--json"),
+    { env, input: passages.join("\n") + "\n", timeout: MODEL_TIMEOUT_MS },
+  );
+  check(
+    result.status === 0,
+    `rerank exits 0 (got ${result.status}) ${result.stderr.slice(0, 300)}`,
+  );
+  const scores = JSON.parse(result.stdout.trim() || "[]");
+  check(
+    scores.length === 3 && scores[1] > scores[0] && scores[1] > scores[2],
+    `rerank scores the relevant passage highest (${scores.map((x) => x.toFixed?.(3))})`,
+  );
+}
+
 async function main() {
   const workDir = mkdtempSync(join(tmpdir(), "nachos-smoke-"));
   try {
@@ -188,9 +216,10 @@ async function main() {
       const info = checkInfo(cli, env, cacheDir);
       checkEmbed(cli, env, info.dimension);
       await checkServe(cli, env, info.dimension);
+      checkRerank(cli, env);
     } else {
       console.log(
-        "skip model checks (set SMOKE_MODEL=1 to run info/embed/serve)",
+        "skip model checks (set SMOKE_MODEL=1 to run info/embed/serve/rerank)",
       );
     }
   } finally {

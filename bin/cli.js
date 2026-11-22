@@ -45,6 +45,23 @@
  *   --max-length <n>     truncate inputs to n tokens (can only lower the
  *                        tokenizer's own limit; default: tokenizer limit)
  *
+ *
+ *   rerank               subcommand: one-shot cross-encoder rerank. Reads one
+ *                        passage per stdin line and prints ONE line: a JSON
+ *                        array of scores (sigmoid of the model logit, in
+ *                        (0,1), higher = more relevant) in input order. Uses
+ *                        --model/--dtype/--max-length/--cache-dir for the
+ *                        reranker (default jinaai/jina-reranker-v1-tiny-en,
+ *                        q8, 512 tokens); --rerank-model/--rerank-dtype also
+ *                        work and take precedence.
+ *   --query <q>          rerank only: the query text
+ *   --rerank-model <id>  serve: load this reranker at startup and accept
+ *   --rerank-dtype <t>   {"id","op":"rerank","query","passages":[...]}
+ *                        requests, replying {"id","scores":[...]}. Either flag
+ *                        enables it; the ready line then also carries
+ *                        "rerank":{"model":"<id>"}. Without them no reranker
+ *                        is downloaded or loaded.
+ *
  * Exit codes: 0 ok, 1 usage error, 2 embedding failure.
  * All diagnostics go to stderr so stdout stays pure JSONL.
  */
@@ -65,6 +82,9 @@ const VALUE_OPTIONS = {
   "--document-prefix": "documentPrefix",
   "--pooling": "pooling",
   "--max-length": "maxLength",
+  "--query": "query",
+  "--rerank-model": "rerankModel",
+  "--rerank-dtype": "rerankDtype",
 };
 
 const INPUT_TYPES = ["query", "document"];
@@ -84,6 +104,9 @@ function parseArgs(argv) {
     documentPrefix: undefined,
     pooling: undefined,
     maxLength: undefined,
+    query: undefined,
+    rerankModel: undefined,
+    rerankDtype: undefined,
     stdin: false,
     json: false,
   };
@@ -149,6 +172,7 @@ async function readStdin() {
 
 // Provider currently in use, so the stdout EPIPE handler can dispose it.
 let activeProvider;
+let activeReranker;
 
 async function makeProvider(args) {
   activeProvider =
@@ -188,12 +212,14 @@ async function makeTransformersProvider(args) {
 
 const USAGE =
   "usage: nachos-embeddings embed --stdin --json [options]\n" +
+  "       nachos-embeddings rerank --query <q> --stdin --json [options]\n" +
   "       nachos-embeddings serve [options]\n" +
   "       nachos-embeddings info [--json] [options]\n" +
   "options: [--provider transformers|bedrock] [--model <id>] [--region <r>]\n" +
   "         [--cache-dir <dir>] [--dtype <fp32|fp16|q8|q4|...>]\n" +
   "         [--type query|document] [--pooling mean|cls] [--max-length <tokens>]\n" +
-  "         [--query-prefix <text>] [--document-prefix <text>]\n";
+  "         [--query-prefix <text>] [--document-prefix <text>]\n" +
+  "serve:   [--rerank-model <id>] [--rerank-dtype <type>] enable op=rerank\n";
 
 function parseLines(raw) {
   // One text per line; preserve order. Drop only a trailing empty line.
@@ -233,9 +259,12 @@ function parseRequest(line) {
   }
 }
 
-async function answerRequest(provider, line) {
+async function answerRequest(provider, line, reranker) {
   const request = parseRequest(line);
   const id = request.id ?? null;
+  if (request.op !== undefined && request.op !== "embed") {
+    return answerOp(id, request, reranker);
+  }
   if (!Array.isArray(request.texts)) {
     return { id, error: "invalid request: expected {id, texts: [...]}" };
   }
@@ -247,6 +276,35 @@ async function answerRequest(provider, line) {
       id,
       vectors: await embedBatchWithType(provider, request.texts, request.type),
     };
+  } catch (e) {
+    return { id, error: String(e?.message ?? e) };
+  }
+}
+
+async function answerOp(id, request, reranker) {
+  if (request.op !== "rerank") {
+    return { id, error: `invalid request: unknown op '${request.op}'` };
+  }
+  if (!reranker) {
+    return {
+      id,
+      error: "rerank is not enabled (start serve with --rerank-model)",
+    };
+  }
+  const { query, passages } = request;
+  if (
+    typeof query !== "string" ||
+    !Array.isArray(passages) ||
+    passages.some((passage) => typeof passage !== "string")
+  ) {
+    return {
+      id,
+      error:
+        "invalid request: expected {id, op: 'rerank', query: string, passages: [string, ...]}",
+    };
+  }
+  try {
+    return { id, scores: await reranker.rerank(query, passages) };
   } catch (e) {
     return { id, error: String(e?.message ?? e) };
   }
@@ -269,7 +327,7 @@ function modelId(provider) {
 
 async function disposeProvider(provider) {
   try {
-    await provider.dispose?.();
+    await provider?.dispose?.();
   } catch (e) {
     process.stderr.write(`dispose failed: ${e?.message ?? e}\n`);
   }
@@ -283,25 +341,53 @@ function handleStdoutError(err) {
   if (stdoutClosing) return;
   stdoutClosing = true;
   const done = () => process.exit(0);
-  if (activeProvider) disposeProvider(activeProvider).then(done, done);
-  else done();
+  Promise.all(
+    [activeReranker, activeProvider]
+      .filter(Boolean)
+      .map((resource) => disposeProvider(resource)),
+  ).then(done, done);
+}
+
+// The reranker is a separate model from the embedding provider. It is only
+// imported and loaded when asked for, so plain serve never touches it.
+async function makeReranker(args, { model, dtype }) {
+  const { Reranker } = await import("../dist/reranker.js");
+  const reranker = new Reranker({
+    ...(model && { model }),
+    ...(dtype && { dtype }),
+    ...(args.cacheDir && { cacheDir: args.cacheDir }),
+    ...(args.maxLength !== undefined && { maxLength: args.maxLength }),
+  });
+  await reranker.init();
+  activeReranker = reranker;
+  return reranker;
 }
 
 async function runServe(args) {
   const provider = await makeProvider(args).catch((e) =>
     fail("init failed", e),
   );
+  const rerankEnabled =
+    args.rerankModel !== undefined || args.rerankDtype !== undefined;
+  const reranker = rerankEnabled
+    ? await makeReranker(args, {
+        model: args.rerankModel,
+        dtype: args.rerankDtype,
+      }).catch((e) => fail("rerank init failed", e))
+    : undefined;
   writeJson({
     ready: true,
     model: modelId(provider),
     dimension: await provider.getDimension(),
     ...embeddingSettings(provider),
+    ...(reranker && { rerank: { model: reranker.getModelId() } }),
   });
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   // Sequential: one in-flight request at a time keeps replies in order.
   for await (const line of lines) {
-    if (line.trim()) writeJson(await answerRequest(provider, line));
+    if (line.trim()) writeJson(await answerRequest(provider, line, reranker));
   }
+  await disposeProvider(reranker);
   await disposeProvider(provider);
 }
 
@@ -347,9 +433,30 @@ async function main() {
   }
   if (args._[0] === "serve") return runServe(args);
   if (args._[0] === "info") return runInfo(args);
+  if (args._[0] === "rerank") return runRerank(args);
   if (!isEmbedCommand(args)) return usageError();
 
   await runEmbedding(args);
+}
+
+async function runRerank(args) {
+  if (args.query === undefined || !args.stdin || !args.json) {
+    return usageError("rerank requires --query <q> --stdin --json");
+  }
+  const passages = parseLines(await readStdin());
+  if (passages.length === 0) {
+    writeJson([]);
+    return;
+  }
+  const reranker = await makeReranker(args, {
+    model: args.rerankModel ?? args.model,
+    dtype: args.rerankDtype ?? args.dtype,
+  }).catch((e) => fail("init failed", e));
+  const scores = await reranker
+    .rerank(args.query, passages)
+    .catch((e) => fail("rerank failed", e));
+  writeJson(scores);
+  await disposeProvider(reranker);
 }
 
 function isEmbedCommand(args) {
