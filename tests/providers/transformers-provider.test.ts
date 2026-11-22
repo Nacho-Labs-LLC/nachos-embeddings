@@ -48,7 +48,9 @@ function makeExtractor() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("NACHOS_EMBEDDINGS_CACHE", "");
-  vi.stubEnv("XDG_CACHE_HOME", "");
+  // Point the default cache at a directory that does not exist, so a model
+  // cached in the developer's real ~/.cache cannot change the load path.
+  vi.stubEnv("XDG_CACHE_HOME", "/nonexistent-nachos-test-cache");
   mockPipeline.mockImplementation(async () => makeExtractor());
 });
 

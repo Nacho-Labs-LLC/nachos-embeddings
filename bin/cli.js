@@ -278,7 +278,8 @@ const USAGE =
   "         [--type query|document] [--pooling mean|cls] [--max-length <tokens>]\n" +
   "         [--query-prefix <text>] [--document-prefix <text>] [--normalize|--no-normalize]\n" +
   "         [--offline]   never use the network (also NACHOS_EMBEDDINGS_OFFLINE=1)\n" +
-  "serve:   [--rerank-model <id>] [--rerank-dtype <type>] enable op=rerank\n";
+  "serve:   [--rerank-model <id>] [--rerank-dtype <type>] enable op=rerank\n" +
+  "         [--rerank-max-length <tokens>]   reranker truncation (--max-length stays with the embedder)\n";
 
 function parseLines(raw) {
   // One text per line; preserve order. Drop only a trailing empty line.

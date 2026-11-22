@@ -2,12 +2,21 @@
 
 ## 0.6.0
 
-**Breaking / migration.** Most changes are backward compatible, but four behaviours differ. See "Migrating from 0.5.x" in the README.
+### Migration from 0.5.x
 
-- The default Transformers model cache moved from `.cache/transformers` (relative to the working directory) to a per-user directory. The first run re-downloads the model (~90MB). Set `NACHOS_EMBEDDINGS_CACHE` to the old path, or move the directory, to keep it.
-- A corrupt or malformed store file now makes `init()`/`load()` reject with `StoreCorruptError` and is never overwritten. Use `onCorruptStore: "quarantine"` to start fresh.
-- The library no longer writes to the console. Pass `logger` or `verbose: true`.
-- `BedrockProvider.getConfig()` redacts `secretAccessKey` and `sessionToken`.
+Most changes are backward compatible. These behaviours differ (checked against `git diff master..HEAD` of `src/` and `bin/`); the README has a matching "Migrating from 0.5.x" section.
+
+- **Model cache moved.** The default Transformers cache was `.cache/transformers` relative to the working directory; it is now per-user (`$NACHOS_EMBEDDINGS_CACHE`, else `$XDG_CACHE_HOME/nachos-embeddings`, else `~/.cache/nachos-embeddings`; Windows `%LOCALAPPDATA%\nachos-embeddings`). The first run re-downloads the model (~90MB). Set `NACHOS_EMBEDDINGS_CACHE` to the old path, or move the directory, to keep it. An explicit `cacheDir` / `--cache-dir` still wins.
+- **`BedrockProvider.getConfig()` redacts secrets.** `secretAccessKey` and `sessionToken` return `"[redacted]"`, and nested objects are copies. Code that read the real values from `getConfig()` must keep them itself.
+- **Corrupt stores throw.** `init()`/`load()` reject with `StoreCorruptError` and the file is never overwritten. Use `onCorruptStore: "quarantine"` for the old forgiving behaviour. A base `SemanticSearch` with `storePath` now also loads the file on `init()`.
+- **Silent by default.** The library no longer writes to the console; pass `logger` or `verbose: true`. (Bedrock `progressLogging` is the explicit opt-in exception.)
+- **Different vectors for some models.** e5 and nomic documents now carry their trained prefix, and nomic applies its layer norm, so vectors differ from 0.5.x. Re-index stores built with those models. MiniLM (the default) and bge documents are unchanged. `getModelId()` also includes overrides that change document vectors.
+- **Temporal boost is applied before `limit`**, so `temporalBoost` users may see different results or ordering.
+- **`EnhancedSemanticSearch` is a deprecated alias** of `SemanticSearch` (option mapping in the README). Defaults still differ: `SemanticSearch` uses `deduplicate: "exact"`, the alias `"normalized"` and `.semantic-store.json`.
+- **Types.** `Embedder.getConfig()` returns `ResolvedTransformersConfig`; `VectorStoreConfig.cacheEmbeddings` is deprecated and no longer part of the resolved config; `EmbeddingProvider.embed/embedBatch` take an optional second `EmbedOptions` argument and gain optional `getModelId()` / `dispose()` (custom providers keep compiling).
+- **CLI.** The CLI was embed-only in 0.5.2 (`embed --stdin --json`), which is unchanged. New subcommands (`serve`, `info`, `models`, `pull`, `rerank`), flags and `--offline` are additive; unknown subcommands/providers and flags missing a value exit 1 with usage. Bedrock provider init errors that are not a missing module now say `Failed to load <module>: ...` instead of the install hint.
+- **`serve` protocol additions (all optional, existing readers unaffected).** Ready line gains `pooling`, `queryPrefix`, `documentPrefix`, optional `maxLength`, `rerank`, `offline`; requests may carry `type` or `op: "rerank"`. `serve --max-length` applies to the embedding model only; use `--rerank-max-length` for the reranker.
+- **Removed:** local `release:*`, `version:*` and `publish:npm` npm scripts (releases are published from CI), source and declaration maps from the package, and `docs/claude-code-integration.md`.
 
 ### Added
 

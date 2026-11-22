@@ -409,6 +409,7 @@ A malformed line, a request without a `texts` array, or an unknown `type` gets a
 - **Corrupt stores now throw.** `init()`/`load()` reject with `StoreCorruptError` instead of being treated as empty and overwritten. Use `onCorruptStore: "quarantine"` for the old forgiving behaviour. A base `SemanticSearch` with `storePath` now also loads it on `init()`.
 - **Silent by default.** The library no longer writes to the console. Pass `logger` or `verbose: true`.
 - **`BedrockProvider.getConfig()`** returns `"[redacted]"` for `secretAccessKey` and `sessionToken`, and copies rather than internal objects.
+- **Vectors changed for e5 and nomic.** Documents now carry the model's trained prefix (and nomic gets its layer norm), so re-index stores built with those models. MiniLM (the default) and bge documents are unchanged.
 - Temporal boost is now applied before `limit`, so results can change order for `temporalBoost` users.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
